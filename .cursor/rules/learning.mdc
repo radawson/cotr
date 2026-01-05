@@ -1,0 +1,10 @@
+---
+name: learning
+description: This is a new rule
+---
+
+# Overview
+
+This is a plugin is being used to learn the plugin creation process for Paper, so provide detailed explanations and background for changes.
+Add detailed comments and complete docstrings to document the structure and intent of the build.
+Work carefully, and provide extra feedback and ask extra questions to make this a highly collaborative process.  

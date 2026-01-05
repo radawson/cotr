@@ -1,0 +1,7 @@
+name: CoinOfTheRealm
+version: 0.1.0
+main: org.clockworx.cotr.CoinOfTheRealmPlugin
+api-version: 1.21.11
+description: A custom currency item - Coin of the Realm
+author: RADawson
+website: https://github.com/radawson/cotr
