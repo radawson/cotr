@@ -41,3 +41,7 @@ nbbuild/
 dist/
 nbdist/
 .nb-gradle/
+
+
+# Cursor
+.cursor/

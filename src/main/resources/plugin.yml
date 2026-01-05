@@ -1,7 +1,38 @@
 name: CoinOfTheRealm
-version: 0.1.0
+version: ${version}
 main: org.clockworx.cotr.CoinOfTheRealmPlugin
 api-version: 1.21.11
 description: A custom currency item - Coin of the Realm
 author: RADawson
 website: https://github.com/radawson/cotr
+
+commands:
+  cotr:
+    description: Coin of the Realm command
+    usage: /<command> <drop|give> [arguments]
+    aliases: [coin, coins]
+    permission: cotr.command.use
+    permission-message: You do not have permission to use this command.
+
+permissions:
+  cotr.*:
+    description: All Coin of the Realm permissions
+    default: op
+    children:
+      cotr.command.*: true
+  cotr.command.*:
+    description: All Coin of the Realm command permissions
+    default: op
+    children:
+      cotr.command.use: true
+      cotr.command.drop: true
+      cotr.command.give: true
+  cotr.command.use:
+    description: Use the /cotr command
+    default: op
+  cotr.command.drop:
+    description: Use /cotr drop command
+    default: op
+  cotr.command.give:
+    description: Use /cotr give command
+    default: op

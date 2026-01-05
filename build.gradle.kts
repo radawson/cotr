@@ -24,46 +24,26 @@ java {
 }
 
 tasks {
-  // Task to replace version placeholders in source and resource files
-  val processVersion by registering {
-    group = "build"
-    description = "Replaces version placeholders in source and resource files"
-    
-    val version = project.property("version") as String
-    
-    doLast {
-      // Process resource files
-      val pluginYml = file("src/main/resources/plugin.yml")
-      val paperPluginYml = file("src/main/resources/paper-plugin.yml")
-      
-      if (pluginYml.exists()) {
-        pluginYml.writeText(pluginYml.readText().replace("\${version}", version))
-      }
-      
-      if (paperPluginYml.exists()) {
-        paperPluginYml.writeText(paperPluginYml.readText().replace("\${version}", version))
-      }
-      
-      // Process Java source file (if version replacement is needed)
-      // Note: CoinOfTheRealmPlugin doesn't currently use version placeholders
+  // Process resources at build time to replace version placeholders
+  // This modifies files in the build output, NOT the source files
+  processResources {
+    // Process YAML resource files for version expansion
+    filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {
+      // Replace ${version} and ${project.version} with actual version
+      // The expand() method processes files during build and outputs to build/resources
+      expand(
+        "version" to project.version,
+        "project.version" to project.version
+      )
     }
   }
   
-  // Make processResources and compileJava depend on processVersion
-  processResources {
-    dependsOn("processVersion")
-  }
-  
-  compileJava {
-    dependsOn("processVersion")
-  }
-  
-  // Configure the JAR task to include plugin.yml
+  // Configure the JAR task
   jar {
     archiveBaseName.set("CoinOfTheRealm")
-    archiveVersion.set(project.property("version") as String)
+    archiveVersion.set(project.version.toString())
     
-    // Include plugin.yml in the JAR
+    // Include processed resources in the JAR
     from(sourceSets.main.get().output)
     
     // Copy resources (like plugin.yml) into the JAR

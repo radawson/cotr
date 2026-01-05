@@ -84,7 +84,6 @@ public class CoinListener implements Listener {
             return;
         }
         
-        Player player = (Player) event.getEntity();
         Item itemEntity = event.getItem();
         ItemStack item = itemEntity.getItemStack();
         

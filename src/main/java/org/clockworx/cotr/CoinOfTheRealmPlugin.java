@@ -1,11 +1,13 @@
 package org.clockworx.cotr;
 
 import org.bukkit.NamespacedKey;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.listener.CoinListener;
 
@@ -44,12 +46,32 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         // Register event listeners
         getServer().getPluginManager().registerEvents(new CoinListener(), this);
         
+        // Register commands
+        registerCommands();
+        
         // Start a task to handle proximity-based pickup for coin displays
         // This allows players to pick up coins by walking near them
         startCoinPickupTask();
         
         getLogger().info("Coin of the Realm plugin has been enabled!");
         getLogger().info("CustomModelData: " + COIN_CUSTOM_MODEL_DATA);
+    }
+    
+    /**
+     * Registers the /cotr command with the server.
+     * Uses Paper's native command registration system.
+     */
+    private void registerCommands() {
+        // Get the command from plugin.yml
+        PluginCommand cotrCommand = getCommand("cotr");
+        if (cotrCommand != null) {
+            CotrCommand executor = new CotrCommand();
+            cotrCommand.setExecutor(executor);
+            cotrCommand.setTabCompleter(executor);
+            getLogger().info("Registered /cotr command");
+        } else {
+            getLogger().warning("Failed to register /cotr command - command not found in plugin.yml");
+        }
     }
     
     /**
