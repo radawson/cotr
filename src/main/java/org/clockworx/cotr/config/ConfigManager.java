@@ -33,6 +33,7 @@ public class ConfigManager {
     private final CoinOfTheRealmPlugin plugin;
     private FileConfiguration config;
     private CoinConfig coinConfig;
+    private boolean debugEnabled;
     private boolean bankingEnabled;
     private String defaultAccountPattern;
     private String membershipStorage;
@@ -71,6 +72,9 @@ public class ConfigManager {
         // Load the config
         config = YamlConfiguration.loadConfiguration(configFile);
         
+        // Load debug setting first (needed for other config loading)
+        loadDebugConfig();
+        
         // Load coin configuration
         loadCoinConfig();
         
@@ -101,6 +105,14 @@ public class ConfigManager {
         } catch (IOException e) {
             plugin.getLogger().severe("Failed to save default config.yml: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Loads the debug configuration from the config file.
+     */
+    private void loadDebugConfig() {
+        debugEnabled = config.getBoolean("debug", false);
+        plugin.getLogger().info("Debug mode: " + debugEnabled);
     }
     
     /**
@@ -211,6 +223,15 @@ public class ConfigManager {
         } else {
             plugin.getLogger().info("Resource pack URL not configured - automatic application disabled");
         }
+    }
+    
+    /**
+     * Checks if debug mode is enabled.
+     * 
+     * @return true if debug mode is enabled
+     */
+    public boolean isDebugEnabled() {
+        return debugEnabled;
     }
     
     /**

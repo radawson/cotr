@@ -215,4 +215,31 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     public AccountMembershipManager getMembershipManager() {
         return membershipManager;
     }
+    
+    /**
+     * Logs a debug message if debug mode is enabled.
+     * Uses the plugin's logger with FINE level following Paper best practices.
+     * 
+     * @param message The debug message
+     */
+    public void debug(String message) {
+        if (configManager != null && configManager.isDebugEnabled()) {
+            getLogger().log(java.util.logging.Level.FINE, message);
+        }
+    }
+    
+    /**
+     * Logs a formatted debug message if debug mode is enabled.
+     * Uses the plugin's logger with FINE level following Paper best practices.
+     * 
+     * @param message The debug message format string
+     * @param args Arguments for message formatting (will be formatted using String.format)
+     */
+    public void debug(String message, Object... args) {
+        if (configManager != null && configManager.isDebugEnabled()) {
+            // Format the message with arguments
+            String formattedMessage = String.format(message.replace("{}", "%s"), args);
+            getLogger().log(java.util.logging.Level.FINE, formattedMessage);
+        }
+    }
 }

@@ -42,21 +42,25 @@ public class CoinItem {
      */
     @NotNull
     public static ItemStack createCoin(int amount) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CoinItem.createCoin() - Creating coin with amount: {}", amount);
+        
         if (amount < 1 || amount > 64) {
             throw new IllegalArgumentException("Coin amount must be between 1 and 64");
         }
 
-        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
         if (plugin == null) {
             throw new IllegalStateException("Plugin instance not available");
         }
 
         CoinConfig coinConfig = plugin.getConfigManager().getCoinConfig();
         Material material = coinConfig.getMaterial();
+        plugin.debug("CoinItem.createCoin() - Coin material from config: {}", material);
 
         if (material == null) {
             // Fallback to gold nugget if material is not available (custom items)
             material = Material.GOLD_NUGGET;
+            plugin.debug("CoinItem.createCoin() - Material was null, using fallback: {}", material);
         }
 
         // Create ItemStack based on configured material
@@ -68,12 +72,16 @@ public class CoinItem {
         }
 
         // Set display name from config
-        meta.displayName(Component.text(coinConfig.getDisplayName(), NamedTextColor.GOLD)
+        String displayName = coinConfig.getDisplayName();
+        plugin.debug("CoinItem.createCoin() - Setting display name: {}", displayName);
+        meta.displayName(Component.text(displayName, NamedTextColor.GOLD)
                 .decoration(TextDecoration.ITALIC, false));
 
         // Set lore from config
+        List<String> loreLines = coinConfig.getLore();
+        plugin.debug("CoinItem.createCoin() - Setting lore with {} lines", loreLines.size());
         List<Component> lore = new ArrayList<>();
-        for (String loreLine : coinConfig.getLore()) {
+        for (String loreLine : loreLines) {
             lore.add(Component.text(loreLine, NamedTextColor.GRAY)
                     .decoration(TextDecoration.ITALIC, false));
         }
@@ -82,23 +90,26 @@ public class CoinItem {
         // Set item model for resource pack texture (newer Paper API)
         NamespacedKey modelKey = coinConfig.getItemModelKey();
         if (modelKey != null) {
+            plugin.debug("CoinItem.createCoin() - Setting item model: {}", modelKey);
             meta.setItemModel(modelKey);
         } else {
             // Fallback to CustomModelData if model not specified
-            meta.setCustomModelData(coinConfig.getCustomModelData());
+            int customModelData = coinConfig.getCustomModelData();
+            plugin.debug("CoinItem.createCoin() - Setting CustomModelData: {}", customModelData);
+            meta.setCustomModelData(customModelData);
         }
 
         // Add NBT data to identify this as a coin
+        NamespacedKey coinKey = plugin.getKey(CoinOfTheRealmPlugin.COIN_NBT_KEY);
+        plugin.debug("CoinItem.createCoin() - Setting NBT key: {}", coinKey);
         PersistentDataContainer container = meta.getPersistentDataContainer();
-        container.set(
-                plugin.getKey(CoinOfTheRealmPlugin.COIN_NBT_KEY),
-                PersistentDataType.BOOLEAN,
-                true);
+        container.set(coinKey, PersistentDataType.BOOLEAN, true);
 
         // Make the item unbreakable and prevent it from being destroyed
         meta.setUnbreakable(true);
 
         coin.setItemMeta(meta);
+        plugin.debug("CoinItem.createCoin() - Coin created successfully: material={}, amount={}", material, amount);
         return coin;
     }
 
@@ -121,11 +132,13 @@ public class CoinItem {
      * @return true if the ItemStack is a coin, false otherwise
      */
     public static boolean isCoin(@NotNull ItemStack item) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        
         if (item == null) {
+            plugin.debug("CoinItem.isCoin() - ItemStack is null, returning false");
             return false;
         }
 
-        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
         if (plugin == null) {
             return false;
         }
@@ -135,8 +148,10 @@ public class CoinItem {
         // Check if material matches configured coin material
         Material itemMaterial = item.getType();
         Material coinMaterial = coinConfig.getMaterial();
+        plugin.debug("CoinItem.isCoin() - Checking item: material={}, configuredMaterial={}", itemMaterial, coinMaterial);
 
         if (coinMaterial != null && itemMaterial != coinMaterial) {
+            plugin.debug("CoinItem.isCoin() - Material mismatch, returning false");
             return false;
         }
 
@@ -144,13 +159,16 @@ public class CoinItem {
         // Check for the coin NBT identifier
         ItemMeta meta = item.getItemMeta();
         if (meta == null) {
+            plugin.debug("CoinItem.isCoin() - ItemMeta is null, returning false");
             return false;
         }
 
+        NamespacedKey coinKey = plugin.getKey(CoinOfTheRealmPlugin.COIN_NBT_KEY);
         PersistentDataContainer container = meta.getPersistentDataContainer();
-        return container.has(
-                plugin.getKey(CoinOfTheRealmPlugin.COIN_NBT_KEY),
-                PersistentDataType.BOOLEAN);
+        boolean hasCoinNBT = container.has(coinKey, PersistentDataType.BOOLEAN);
+        plugin.debug("CoinItem.isCoin() - NBT check: key={}, hasCoinNBT={}", coinKey, hasCoinNBT);
+        
+        return hasCoinNBT;
     }
 
     /**
@@ -161,9 +179,16 @@ public class CoinItem {
      * @return The amount of coins, or 0 if not a coin
      */
     public static int getCoinAmount(@NotNull ItemStack item) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CoinItem.getCoinAmount() - Getting coin amount from ItemStack");
+        
         if (!isCoin(item)) {
+            plugin.debug("CoinItem.getCoinAmount() - Item is not a coin, returning 0");
             return 0;
         }
-        return item.getAmount();
+        
+        int amount = item.getAmount();
+        plugin.debug("CoinItem.getCoinAmount() - Coin amount: {}", amount);
+        return amount;
     }
 }

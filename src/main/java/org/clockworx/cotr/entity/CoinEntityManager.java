@@ -5,6 +5,7 @@ import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Transformation;
+import org.clockworx.cotr.CoinOfTheRealmPlugin;
 import org.clockworx.cotr.item.CoinItem;
 import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
@@ -41,15 +42,23 @@ public class CoinEntityManager {
      * @return The created ItemDisplay entity, or null if creation failed
      */
     public static ItemDisplay createCoinDisplay(Location location, ItemStack coin) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CoinEntityManager.createCoinDisplay() - location={}, coin={}, amount={}", 
+            location, coin != null ? coin.getType() : "null", coin != null ? coin.getAmount() : 0);
+        
         if (location == null || coin == null || !CoinItem.isCoin(coin)) {
+            plugin.debug("CoinEntityManager.createCoinDisplay() - Validation failed: location={}, coin={}, isCoin={}", 
+                location != null, coin != null, coin != null && CoinItem.isCoin(coin));
             return null;
         }
         
         // Spawn an ItemDisplay entity at the location
+        plugin.debug("CoinEntityManager.createCoinDisplay() - Spawning ItemDisplay at location {}", location);
         ItemDisplay display = location.getWorld().spawn(location, ItemDisplay.class);
         
         // Set the item to display (this will use the CustomModelData)
         display.setItemStack(coin);
+        plugin.debug("CoinEntityManager.createCoinDisplay() - Set ItemStack on display: {}", coin.getType());
         
         // Configure the display transformation (scale, rotation, translation)
         Transformation transformation = new Transformation(
@@ -59,22 +68,21 @@ public class CoinEntityManager {
             new AxisAngle4f(0, 0, 0, 0) // Right rotation (none)
         );
         display.setTransformation(transformation);
+        plugin.debug("CoinEntityManager.createCoinDisplay() - Set transformation with scale: {}", COIN_SCALE);
         
         // Set display properties
         display.setDisplayWidth(0.5f);
         display.setDisplayHeight(0.5f);
-        
-        // Make the display billboard (always face the player)
         display.setBillboard(org.bukkit.entity.Display.Billboard.CENTER);
+        plugin.debug("CoinEntityManager.createCoinDisplay() - Set display properties: width=0.5, height=0.5, billboard=CENTER");
         
         // Mark this display as a coin display for identification
         // The ItemStack is already stored in the display via setItemStack()
-        display.getPersistentDataContainer().set(
-            org.clockworx.cotr.CoinOfTheRealmPlugin.getInstance().getKey("is_coin_display"),
-            org.bukkit.persistence.PersistentDataType.BOOLEAN,
-            true
-        );
+        org.bukkit.NamespacedKey coinDisplayKey = plugin.getKey("is_coin_display");
+        display.getPersistentDataContainer().set(coinDisplayKey, org.bukkit.persistence.PersistentDataType.BOOLEAN, true);
+        plugin.debug("CoinEntityManager.createCoinDisplay() - Marked as coin display with key: {}", coinDisplayKey);
         
+        plugin.debug("CoinEntityManager.createCoinDisplay() - ItemDisplay created successfully");
         return display;
     }
     
@@ -85,26 +93,36 @@ public class CoinEntityManager {
      * @return The coin ItemStack, or null if the display is not a coin
      */
     public static ItemStack getCoinFromDisplay(ItemDisplay display) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CoinEntityManager.getCoinFromDisplay() - display={}", display != null ? "present" : "null");
+        
         if (display == null) {
+            plugin.debug("CoinEntityManager.getCoinFromDisplay() - Display is null, returning null");
             return null;
         }
         
         // Check if this is a coin display
-        boolean isCoinDisplay = display.getPersistentDataContainer().has(
-            org.clockworx.cotr.CoinOfTheRealmPlugin.getInstance().getKey("is_coin_display"),
-            org.bukkit.persistence.PersistentDataType.BOOLEAN
-        );
+        org.bukkit.NamespacedKey coinDisplayKey = plugin.getKey("is_coin_display");
+        boolean isCoinDisplay = display.getPersistentDataContainer().has(coinDisplayKey, org.bukkit.persistence.PersistentDataType.BOOLEAN);
+        plugin.debug("CoinEntityManager.getCoinFromDisplay() - Coin display check: key={}, isCoinDisplay={}", coinDisplayKey, isCoinDisplay);
         
         if (!isCoinDisplay) {
+            plugin.debug("CoinEntityManager.getCoinFromDisplay() - Not a coin display, returning null");
             return null;
         }
         
         // Fall back to the item stack being displayed
         ItemStack item = display.getItemStack();
-        if (item != null && CoinItem.isCoin(item)) {
+        boolean isCoin = item != null && CoinItem.isCoin(item);
+        plugin.debug("CoinEntityManager.getCoinFromDisplay() - ItemStack check: item={}, isCoin={}", 
+            item != null ? item.getType() : "null", isCoin);
+        
+        if (isCoin) {
+            plugin.debug("CoinEntityManager.getCoinFromDisplay() - Returning coin ItemStack: amount={}", item.getAmount());
             return item;
         }
         
+        plugin.debug("CoinEntityManager.getCoinFromDisplay() - ItemStack is not a coin, returning null");
         return null;
     }
     
@@ -116,18 +134,30 @@ public class CoinEntityManager {
      * @return true if the coin was successfully given, false otherwise
      */
     public static boolean giveCoinToPlayer(Player player, ItemStack coin) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CoinEntityManager.giveCoinToPlayer() - player={}, coin={}, amount={}", 
+            player != null ? player.getName() : "null", 
+            coin != null ? coin.getType() : "null", 
+            coin != null ? coin.getAmount() : 0);
+        
         if (player == null || coin == null || !CoinItem.isCoin(coin)) {
+            plugin.debug("CoinEntityManager.giveCoinToPlayer() - Validation failed: player={}, coin={}, isCoin={}", 
+                player != null, coin != null, coin != null && CoinItem.isCoin(coin));
             return false;
         }
         
         // Try to add to inventory first
+        plugin.debug("CoinEntityManager.giveCoinToPlayer() - Adding {} coins to player inventory", coin.getAmount());
         java.util.HashMap<Integer, ItemStack> overflow = player.getInventory().addItem(coin);
         
         // If there's overflow, drop it at the player's location
         if (!overflow.isEmpty()) {
+            plugin.debug("CoinEntityManager.giveCoinToPlayer() - Inventory full, dropping {} overflow items", overflow.size());
             for (ItemStack item : overflow.values()) {
                 player.getWorld().dropItemNaturally(player.getLocation(), item);
             }
+        } else {
+            plugin.debug("CoinEntityManager.giveCoinToPlayer() - All coins added to inventory successfully");
         }
         
         return true;

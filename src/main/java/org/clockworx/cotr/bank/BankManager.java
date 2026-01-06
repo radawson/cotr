@@ -60,11 +60,16 @@ public class BankManager {
      * Uses reflection to avoid ClassNotFoundException when ServiceIO isn't installed.
      */
     private void initializeBankController() {
+        plugin.debug("BankManager.initializeBankController() - Starting BankController initialization");
+        
         if (!configManager.isBankingEnabled()) {
             bankingEnabled = false;
             plugin.getLogger().info("Banking is disabled in config.yml");
+            plugin.debug("BankManager.initializeBankController() - Banking disabled in config, aborting");
             return;
         }
+        
+        plugin.debug("BankManager.initializeBankController() - Banking enabled in config, checking for ServiceIO plugin");
         
         // First, check if ServiceIO plugin exists
         org.bukkit.plugin.Plugin serviceIOPlugin = plugin.getServer().getPluginManager().getPlugin("ServiceIO");
@@ -72,31 +77,50 @@ public class BankManager {
             bankingEnabled = false;
             plugin.getLogger().warning("ServiceIO plugin not found or not enabled. Banking features disabled.");
             plugin.getLogger().warning("Install and enable ServiceIO plugin to enable banking features.");
+            plugin.debug("BankManager.initializeBankController() - ServiceIO plugin not found or disabled. serviceIOPlugin={}", serviceIOPlugin);
             return;
         }
+        
+        plugin.debug("BankManager.initializeBankController() - ServiceIO plugin found: enabled={}, version={}", 
+            serviceIOPlugin.isEnabled(), 
+            serviceIOPlugin.getDescription().getVersion());
         
         plugin.getLogger().info("ServiceIO plugin detected. Attempting to load BankController...");
         
         try {
             // Try to load the BankController class
-            Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
+            String className = "net.thenextlvl.service.api.economy.bank.BankController";
+            plugin.debug("BankManager.initializeBankController() - Attempting to load class: {}", className);
+            
+            Class<?> bankControllerClass = Class.forName(className);
             plugin.getLogger().info("BankController class found: " + bankControllerClass.getName());
+            plugin.debug("BankManager.initializeBankController() - Class loaded successfully: {}", bankControllerClass.getName());
             
             // Try to get the service from ServicesManager
+            plugin.debug("BankManager.initializeBankController() - Querying ServicesManager for BankController");
             bankController = plugin.getServer().getServicesManager().load(bankControllerClass);
+            plugin.debug("BankManager.initializeBankController() - ServicesManager.load() returned: {}", bankController != null ? "non-null" : "null");
             
             if (bankController == null) {
                 // Try alternative: get provider directly
+                plugin.debug("BankManager.initializeBankController() - ServicesManager.load() returned null, trying getRegistrations()");
                 try {
                     java.util.List<org.bukkit.plugin.RegisteredServiceProvider<?>> providers = 
                         new java.util.ArrayList<>(plugin.getServer().getServicesManager().getRegistrations(bankControllerClass));
+                    plugin.debug("BankManager.initializeBankController() - getRegistrations() returned {} providers", providers != null ? providers.size() : 0);
+                    
                     if (providers != null && !providers.isEmpty()) {
                         org.bukkit.plugin.RegisteredServiceProvider<?> provider = providers.get(0);
                         bankController = provider.getProvider();
                         plugin.getLogger().info("Found BankController via provider: " + provider.getPlugin().getName());
+                        plugin.debug("BankManager.initializeBankController() - Got BankController from provider: plugin={}, priority={}", 
+                            provider.getPlugin().getName(), provider.getPriority());
+                    } else {
+                        plugin.debug("BankManager.initializeBankController() - No providers found in registration list");
                     }
                 } catch (Exception e2) {
                     plugin.getLogger().warning("Failed to get BankController provider: " + e2.getMessage());
+                    plugin.debug("BankManager.initializeBankController() - Exception getting provider: {} - {}", e2.getClass().getSimpleName(), e2.getMessage());
                 }
             }
             
@@ -104,18 +128,21 @@ public class BankManager {
                 bankingEnabled = false;
                 plugin.getLogger().warning("ServiceIO BankController service not registered. Banking features disabled.");
                 plugin.getLogger().warning("Ensure ServiceIO is properly configured and has registered the BankController service.");
+                plugin.debug("BankManager.initializeBankController() - BankController is null after all attempts, banking disabled");
             } else {
                 bankingEnabled = true;
                 plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
+                plugin.debug("BankManager.initializeBankController() - BankController initialized successfully, banking enabled");
             }
         } catch (ClassNotFoundException e) {
             bankingEnabled = false;
             plugin.getLogger().warning("ServiceIO BankController class not found: " + e.getMessage());
             plugin.getLogger().warning("This may indicate a version mismatch. Ensure ServiceIO version 2.3.1+ is installed.");
+            plugin.debug("BankManager.initializeBankController() - ClassNotFoundException: {}", e.getMessage());
         } catch (Exception e) {
             bankingEnabled = false;
-            plugin.getLogger().warning("Error loading ServiceIO BankController: " + e.getMessage());
-            plugin.getLogger().log(java.util.logging.Level.WARNING, "Stack trace", e);
+            plugin.getLogger().log(java.util.logging.Level.SEVERE, "Error loading ServiceIO BankController", e);
+            plugin.debug("BankManager.initializeBankController() - Exception during initialization: {} - {}", e.getClass().getSimpleName(), e.getMessage());
         }
     }
     
@@ -148,34 +175,49 @@ public class BankManager {
      */
     @NotNull
     public CompletableFuture<Boolean> createAccount(@NotNull Player owner, @NotNull String accountName) {
+        plugin.debug("BankManager.createAccount() - owner={}, accountName={}", owner.getName(), accountName);
+        
         if (!isBankingEnabled()) {
+            plugin.debug("BankManager.createAccount() - Banking not enabled, returning false");
             return CompletableFuture.completedFuture(false);
         }
         
         // Check if account already exists in membership system
-        if (membershipManager.getAccountMemberships(accountName).size() > 0) {
+        int existingMemberships = membershipManager.getAccountMemberships(accountName).size();
+        plugin.debug("BankManager.createAccount() - Existing memberships for account '{}': {}", accountName, existingMemberships);
+        
+        if (existingMemberships > 0) {
+            plugin.debug("BankManager.createAccount() - Account '{}' already exists, returning false", accountName);
             return CompletableFuture.completedFuture(false);
         }
         
         // Create membership entry first
+        plugin.debug("BankManager.createAccount() - Creating membership entry for account '{}'", accountName);
         boolean membershipCreated = membershipManager.createAccount(accountName, owner.getUniqueId());
+        plugin.debug("BankManager.createAccount() - Membership creation result: {}", membershipCreated);
+        
         if (!membershipCreated) {
+            plugin.debug("BankManager.createAccount() - Membership creation failed, returning false");
             return CompletableFuture.completedFuture(false);
         }
         
         // Create bank in BankController (owner is the player UUID)
+        plugin.debug("BankManager.createAccount() - Creating bank via BankReflectionHelper for account '{}'", accountName);
         return BankReflectionHelper.createBank(bankController, owner.getUniqueId(), accountName)
             .thenApply(bank -> {
                 if (bank != null) {
                     plugin.getLogger().info("Created account '" + accountName + "' for player " + owner.getName());
+                    plugin.debug("BankManager.createAccount() - Bank created successfully for account '{}'", accountName);
                     return true;
                 }
                 // Rollback membership if bank creation failed
+                plugin.debug("BankManager.createAccount() - Bank creation returned null, rolling back membership");
                 membershipManager.deleteAccount(accountName);
                 return false;
             })
             .exceptionally(ex -> {
-                plugin.getLogger().warning("Failed to create bank account '" + accountName + "': " + ex.getMessage());
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to create bank account '" + accountName + "'", ex);
+                plugin.debug("BankManager.createAccount() - Exception during bank creation: {} - {}", ex.getClass().getSimpleName(), ex.getMessage());
                 // Rollback membership
                 membershipManager.deleteAccount(accountName);
                 return false;
@@ -191,18 +233,31 @@ public class BankManager {
      */
     @NotNull
     public CompletableFuture<Object> getAccount(@NotNull Player player, @NotNull String accountName) {
+        plugin.debug("BankManager.getAccount() - player={}, accountName={}", player.getName(), accountName);
+        
         if (!isBankingEnabled()) {
+            plugin.debug("BankManager.getAccount() - Banking not enabled, returning null");
             return CompletableFuture.completedFuture(null);
         }
         
         // Check access via membership manager
-        if (!membershipManager.hasAccess(player.getUniqueId(), accountName)) {
+        boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accountName);
+        plugin.debug("BankManager.getAccount() - Access check result: {}", hasAccess);
+        
+        if (!hasAccess) {
+            plugin.debug("BankManager.getAccount() - Player {} does not have access to account '{}'", player.getName(), accountName);
             return CompletableFuture.completedFuture(null);
         }
         
+        plugin.debug("BankManager.getAccount() - Loading bank via BankReflectionHelper for account '{}'", accountName);
         return BankReflectionHelper.loadBank(bankController, accountName)
+            .thenApply(bank -> {
+                plugin.debug("BankManager.getAccount() - Bank loaded: {}", bank != null ? "success" : "null");
+                return bank;
+            })
             .exceptionally(ex -> {
-                plugin.getLogger().warning("Failed to load bank account '" + accountName + "': " + ex.getMessage());
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load bank account '" + accountName + "'", ex);
+                plugin.debug("BankManager.getAccount() - Exception loading bank: {} - {}", ex.getClass().getSimpleName(), ex.getMessage());
                 return null;
             });
     }
@@ -248,12 +303,17 @@ public class BankManager {
      */
     @NotNull
     public CompletableFuture<Integer> getBalance(@NotNull Player player, @NotNull String accountName) {
+        plugin.debug("BankManager.getBalance() - player={}, accountName={}", player.getName(), accountName);
+        
         return getAccount(player, accountName)
             .thenApply(bank -> {
                 if (bank == null) {
+                    plugin.debug("BankManager.getBalance() - Bank is null, returning null");
                     return null;
                 }
                 BigDecimal balance = BankReflectionHelper.getBalance(bank);
+                int balanceInt = balance != null ? balance.intValue() : 0;
+                plugin.debug("BankManager.getBalance() - Balance retrieved: {} (BigDecimal: {})", balanceInt, balance);
                 // Convert BigDecimal to int (round to nearest integer)
                 return balance != null ? balance.intValue() : null;
             });
@@ -269,7 +329,10 @@ public class BankManager {
      */
     @NotNull
     public CompletableFuture<Boolean> deposit(@NotNull Player player, @Nullable String accountName, int amount) {
+        plugin.debug("BankManager.deposit() - player={}, accountName={}, amount={}", player.getName(), accountName, amount);
+        
         if (!isBankingEnabled()) {
+            plugin.debug("BankManager.deposit() - Banking not enabled, returning false");
             return CompletableFuture.completedFuture(false);
         }
         
@@ -279,28 +342,40 @@ public class BankManager {
             getDefaultAccount(player);
         
         return accountFuture.thenCompose(accName -> {
+            plugin.debug("BankManager.deposit() - Resolved account name: {}", accName);
+            
             if (accName == null) {
+                plugin.debug("BankManager.deposit() - Account name is null, returning false");
                 return CompletableFuture.completedFuture(false);
             }
             
             // Check access
-            if (!membershipManager.hasAccess(player.getUniqueId(), accName)) {
+            boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
+            plugin.debug("BankManager.deposit() - Access check: {}", hasAccess);
+            
+            if (!hasAccess) {
+                plugin.debug("BankManager.deposit() - Player {} does not have access to account '{}'", player.getName(), accName);
                 return CompletableFuture.completedFuture(false);
             }
             
             // Count coins in inventory
             int coinsInInventory = countCoinsInInventory(player);
+            plugin.debug("BankManager.deposit() - Coins in inventory: {}, required: {}", coinsInInventory, amount);
+            
             if (coinsInInventory < amount) {
+                plugin.debug("BankManager.deposit() - Insufficient coins in inventory");
                 return CompletableFuture.completedFuture(false);
             }
             
             // Remove coins from inventory
+            plugin.debug("BankManager.deposit() - Removing {} coins from inventory", amount);
             removeCoinsFromInventory(player, amount);
             
             // Get bank and deposit
             return getAccount(player, accName)
                 .thenCompose(bank -> {
                     if (bank == null) {
+                        plugin.debug("BankManager.deposit() - Bank is null, refunding coins");
                         // Refund coins if bank access failed
                         giveCoinsToPlayer(player, amount);
                         return CompletableFuture.completedFuture(false);
@@ -308,12 +383,17 @@ public class BankManager {
                     
                     // Convert int to BigDecimal for API call
                     BigDecimal depositAmount = BigDecimal.valueOf(amount);
+                    plugin.debug("BankManager.deposit() - Depositing {} (BigDecimal) to bank", depositAmount);
                     BigDecimal newBalance = BankReflectionHelper.deposit(bank, depositAmount);
+                    
                     if (newBalance == null) {
+                        plugin.debug("BankManager.deposit() - Deposit returned null, refunding coins");
                         // Refund coins if deposit failed
                         giveCoinsToPlayer(player, amount);
                         return CompletableFuture.completedFuture(false);
                     }
+                    
+                    plugin.debug("BankManager.deposit() - Deposit successful, new balance: {}", newBalance);
                     return CompletableFuture.completedFuture(true);
                 });
         });
@@ -329,7 +409,10 @@ public class BankManager {
      */
     @NotNull
     public CompletableFuture<Boolean> withdraw(@NotNull Player player, @Nullable String accountName, int amount) {
+        plugin.debug("BankManager.withdraw() - player={}, accountName={}, amount={}", player.getName(), accountName, amount);
+        
         if (!isBankingEnabled()) {
+            plugin.debug("BankManager.withdraw() - Banking not enabled, returning false");
             return CompletableFuture.completedFuture(false);
         }
         
@@ -339,12 +422,19 @@ public class BankManager {
             getDefaultAccount(player);
         
         return accountFuture.thenCompose(accName -> {
+            plugin.debug("BankManager.withdraw() - Resolved account name: {}", accName);
+            
             if (accName == null) {
+                plugin.debug("BankManager.withdraw() - Account name is null, returning false");
                 return CompletableFuture.completedFuture(false);
             }
             
             // Check access
-            if (!membershipManager.hasAccess(player.getUniqueId(), accName)) {
+            boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
+            plugin.debug("BankManager.withdraw() - Access check: {}", hasAccess);
+            
+            if (!hasAccess) {
+                plugin.debug("BankManager.withdraw() - Player {} does not have access to account '{}'", player.getName(), accName);
                 return CompletableFuture.completedFuture(false);
             }
             
@@ -352,24 +442,33 @@ public class BankManager {
             return getAccount(player, accName)
                 .thenCompose(bank -> {
                     if (bank == null) {
+                        plugin.debug("BankManager.withdraw() - Bank is null, returning false");
                         return CompletableFuture.completedFuture(false);
                     }
                     
                     // Convert BigDecimal balance to int for comparison
                     BigDecimal balance = BankReflectionHelper.getBalance(bank);
                     int balanceInt = balance != null ? balance.intValue() : 0;
+                    plugin.debug("BankManager.withdraw() - Current balance: {} (BigDecimal: {})", balanceInt, balance);
+                    
                     if (balanceInt < amount) {
+                        plugin.debug("BankManager.withdraw() - Insufficient balance: {} < {}", balanceInt, amount);
                         return CompletableFuture.completedFuture(false);
                     }
                     
                     // Convert int to BigDecimal for API call
                     BigDecimal withdrawAmount = BigDecimal.valueOf(amount);
+                    plugin.debug("BankManager.withdraw() - Withdrawing {} (BigDecimal) from bank", withdrawAmount);
                     BigDecimal newBalance = BankReflectionHelper.withdraw(bank, withdrawAmount);
+                    
                     if (newBalance != null) {
+                        plugin.debug("BankManager.withdraw() - Withdrawal successful, new balance: {}, giving {} coins to player", newBalance, amount);
                         // Give coins to player
                         giveCoinsToPlayer(player, amount);
                         return CompletableFuture.completedFuture(true);
                     }
+                    
+                    plugin.debug("BankManager.withdraw() - Withdrawal returned null, returning false");
                     return CompletableFuture.completedFuture(false);
                 });
         });

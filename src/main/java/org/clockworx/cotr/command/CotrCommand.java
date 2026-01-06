@@ -36,13 +36,19 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
     
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.onCommand() - sender={}, label={}, args={}", 
+            sender.getName(), label, java.util.Arrays.toString(args));
+        
         // Check if any arguments were provided
         if (args.length == 0) {
+            plugin.debug("CotrCommand.onCommand() - No arguments provided, showing usage");
             sendUsage(sender);
             return true;
         }
         
         String subcommand = args[0].toLowerCase();
+        plugin.debug("CotrCommand.onCommand() - Routing to subcommand: {}", subcommand);
         
         // Route to appropriate subcommand handler
         switch (subcommand) {
@@ -63,6 +69,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             case "info":
                 return handleInfo(sender, args);
             default:
+                plugin.debug("CotrCommand.onCommand() - Unknown subcommand: {}", subcommand);
                 sender.sendMessage(Component.text("Unknown subcommand: " + subcommand, NamedTextColor.RED));
                 sendUsage(sender);
                 return true;
@@ -89,12 +96,17 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
      * Handles the /cotr drop [amount] subcommand.
      */
     private boolean handleDrop(@NotNull CommandSender sender, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.handleDrop() - sender={}, args={}", sender.getName(), java.util.Arrays.toString(args));
+        
         if (!sender.hasPermission("cotr.command.drop")) {
+            plugin.debug("CotrCommand.handleDrop() - Permission check failed");
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
             return true;
         }
         
         if (!(sender instanceof Player)) {
+            plugin.debug("CotrCommand.handleDrop() - Sender is not a player");
             sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
             return true;
         }
@@ -102,6 +114,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         Player player = (Player) sender;
         
         if (args.length < 2) {
+            plugin.debug("CotrCommand.handleDrop() - Insufficient arguments");
             sender.sendMessage(Component.text("Usage: /cotr drop <amount>", NamedTextColor.RED));
             return true;
         }
@@ -109,28 +122,35 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         int amount;
         try {
             amount = Integer.parseInt(args[1]);
+            plugin.debug("CotrCommand.handleDrop() - Parsed amount: {}", amount);
         } catch (NumberFormatException e) {
+            plugin.debug("CotrCommand.handleDrop() - Invalid amount format: {}", args[1]);
             sender.sendMessage(Component.text("Invalid amount: " + args[1], NamedTextColor.RED));
             return true;
         }
         
         if (amount < 1 || amount > 64) {
+            plugin.debug("CotrCommand.handleDrop() - Amount out of range: {}", amount);
             sender.sendMessage(Component.text("Amount must be between 1 and 64", NamedTextColor.RED));
             return true;
         }
         
         try {
+            plugin.debug("CotrCommand.handleDrop() - Creating coin ItemStack with amount: {}", amount);
             ItemStack coin = CoinItem.createCoin(amount);
             org.bukkit.Location dropLocation = player.getLocation().add(
                 player.getLocation().getDirection().multiply(0.5)
             );
             dropLocation.setY(dropLocation.getY() + player.getEyeHeight() - 0.3);
+            plugin.debug("CotrCommand.handleDrop() - Drop location: {}", dropLocation);
             
             org.bukkit.entity.ItemDisplay coinDisplay = CoinEntityManager.createCoinDisplay(dropLocation, coin);
             if (coinDisplay != null) {
+                plugin.debug("CotrCommand.handleDrop() - ItemDisplay created, adding velocity");
                 coinDisplay.setVelocity(player.getLocation().getDirection().multiply(0.3));
                 sender.sendMessage(Component.text("Dropped " + amount + " coin(s)!", NamedTextColor.GREEN));
             } else {
+                plugin.debug("CotrCommand.handleDrop() - ItemDisplay creation failed, using normal drop");
                 player.getWorld().dropItemNaturally(dropLocation, coin);
                 sender.sendMessage(Component.text("Dropped " + amount + " coin(s)!", NamedTextColor.GREEN));
             }
@@ -145,26 +165,35 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
      * Handles the /cotr give [user] [amount] subcommand (physical coins).
      */
     private boolean handleGive(@NotNull CommandSender sender, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.handleGive() - sender={}, args={}", sender.getName(), java.util.Arrays.toString(args));
+        
         if (!sender.hasPermission("cotr.command.give")) {
+            plugin.debug("CotrCommand.handleGive() - Permission check failed");
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
             return true;
         }
         
         // Check if this is bank-to-bank transfer (3+ args) or physical give (3 args)
         if (args.length >= 4) {
+            plugin.debug("CotrCommand.handleGive() - Detected bank-to-bank transfer (4+ args)");
             // Bank-to-bank transfer
             return handleBankTransfer(sender, args);
         }
         
         // Physical coin give
+        plugin.debug("CotrCommand.handleGive() - Processing physical coin give");
         if (args.length < 3) {
+            plugin.debug("CotrCommand.handleGive() - Insufficient arguments");
             sender.sendMessage(Component.text("Usage: /cotr give <player> <amount>", NamedTextColor.RED));
             return true;
         }
         
         String targetName = args[1];
+        plugin.debug("CotrCommand.handleGive() - Target player: {}", targetName);
         Player target = sender.getServer().getPlayer(targetName);
         if (target == null) {
+            plugin.debug("CotrCommand.handleGive() - Player not found: {}", targetName);
             sender.sendMessage(Component.text("Player not found: " + targetName, NamedTextColor.RED));
             return true;
         }
@@ -172,7 +201,9 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         int amount;
         try {
             amount = Integer.parseInt(args[2]);
+            plugin.debug("CotrCommand.handleGive() - Parsed amount: {}", amount);
         } catch (NumberFormatException e) {
+            plugin.debug("CotrCommand.handleGive() - Invalid amount format: {}", args[2]);
             sender.sendMessage(Component.text("Invalid amount: " + args[2], NamedTextColor.RED));
             return true;
         }
@@ -285,12 +316,17 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
      * Handles /cotr deposit [account] <amount>
      */
     private boolean handleDeposit(@NotNull CommandSender sender, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.handleDeposit() - sender={}, args={}", sender.getName(), java.util.Arrays.toString(args));
+        
         if (!sender.hasPermission("cotr.command.deposit")) {
+            plugin.debug("CotrCommand.handleDeposit() - Permission check failed");
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
             return true;
         }
         
         if (!(sender instanceof Player)) {
+            plugin.debug("CotrCommand.handleDeposit() - Sender is not a player");
             sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
             return true;
         }
@@ -298,11 +334,13 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         Player player = (Player) sender;
         BankManager bankManager = getBankManager();
         if (bankManager == null || !bankManager.isBankingEnabled()) {
+            plugin.debug("CotrCommand.handleDeposit() - Banking not available");
             sender.sendMessage(Component.text("Banking is not available.", NamedTextColor.RED));
             return true;
         }
         
         if (args.length < 2) {
+            plugin.debug("CotrCommand.handleDeposit() - Insufficient arguments");
             sender.sendMessage(Component.text("Usage: /cotr deposit [account] <amount>", NamedTextColor.RED));
             return true;
         }
@@ -312,29 +350,39 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         
         if (args.length == 2) {
             // /cotr deposit <amount> (use default account)
+            plugin.debug("CotrCommand.handleDeposit() - Using default account");
             try {
                 amount = Integer.parseInt(args[1]);
+                plugin.debug("CotrCommand.handleDeposit() - Parsed amount: {}", amount);
             } catch (NumberFormatException e) {
+                plugin.debug("CotrCommand.handleDeposit() - Invalid amount format: {}", args[1]);
                 sender.sendMessage(Component.text("Invalid amount: " + args[1] + " (must be a whole number)", NamedTextColor.RED));
                 return true;
             }
         } else {
             // /cotr deposit <account> <amount>
             accountName = args[1];
+            plugin.debug("CotrCommand.handleDeposit() - Using account: {}", accountName);
             try {
                 amount = Integer.parseInt(args[2]);
+                plugin.debug("CotrCommand.handleDeposit() - Parsed amount: {}", amount);
             } catch (NumberFormatException e) {
+                plugin.debug("CotrCommand.handleDeposit() - Invalid amount format: {}", args[2]);
                 sender.sendMessage(Component.text("Invalid amount: " + args[2] + " (must be a whole number)", NamedTextColor.RED));
                 return true;
             }
         }
         
         if (amount <= 0) {
+            plugin.debug("CotrCommand.handleDeposit() - Amount must be > 0, got: {}", amount);
             sender.sendMessage(Component.text("Amount must be greater than 0", NamedTextColor.RED));
             return true;
         }
         
+        plugin.debug("CotrCommand.handleDeposit() - Initiating deposit: player={}, account={}, amount={}", 
+            player.getName(), accountName, amount);
         bankManager.deposit(player, accountName, amount).thenAccept(success -> {
+            plugin.debug("CotrCommand.handleDeposit() - Deposit result: {}", success);
             if (success) {
                 sender.sendMessage(Component.text("Deposited " + amount + " coins!", NamedTextColor.GREEN));
             } else {
@@ -349,12 +397,17 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
      * Handles /cotr withdraw [account] <amount>
      */
     private boolean handleWithdraw(@NotNull CommandSender sender, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.handleWithdraw() - sender={}, args={}", sender.getName(), java.util.Arrays.toString(args));
+        
         if (!sender.hasPermission("cotr.command.withdraw")) {
+            plugin.debug("CotrCommand.handleWithdraw() - Permission check failed");
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
             return true;
         }
         
         if (!(sender instanceof Player)) {
+            plugin.debug("CotrCommand.handleWithdraw() - Sender is not a player");
             sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
             return true;
         }
@@ -362,6 +415,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         Player player = (Player) sender;
         BankManager bankManager = getBankManager();
         if (bankManager == null || !bankManager.isBankingEnabled()) {
+            plugin.debug("CotrCommand.handleWithdraw() - Banking not available");
             sender.sendMessage(Component.text("Banking is not available.", NamedTextColor.RED));
             return true;
         }
@@ -392,11 +446,15 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         }
         
         if (amount <= 0) {
+            plugin.debug("CotrCommand.handleWithdraw() - Amount must be > 0, got: {}", amount);
             sender.sendMessage(Component.text("Amount must be greater than 0", NamedTextColor.RED));
             return true;
         }
         
+        plugin.debug("CotrCommand.handleWithdraw() - Initiating withdrawal: player={}, account={}, amount={}", 
+            player.getName(), accountName, amount);
         bankManager.withdraw(player, accountName, amount).thenAccept(success -> {
+            plugin.debug("CotrCommand.handleWithdraw() - Withdrawal result: {}", success);
             if (success) {
                 sender.sendMessage(Component.text("Withdrew " + amount + " coins!", NamedTextColor.GREEN));
             } else {
@@ -411,12 +469,17 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
      * Handles /cotr balance [account]
      */
     private boolean handleBalance(@NotNull CommandSender sender, @NotNull String[] args) {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        plugin.debug("CotrCommand.handleBalance() - sender={}, args={}", sender.getName(), java.util.Arrays.toString(args));
+        
         if (!sender.hasPermission("cotr.command.balance")) {
+            plugin.debug("CotrCommand.handleBalance() - Permission check failed");
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
             return true;
         }
         
         if (!(sender instanceof Player)) {
+            plugin.debug("CotrCommand.handleBalance() - Sender is not a player");
             sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
             return true;
         }
@@ -424,13 +487,16 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         Player player = (Player) sender;
         BankManager bankManager = getBankManager();
         if (bankManager == null || !bankManager.isBankingEnabled()) {
+            plugin.debug("CotrCommand.handleBalance() - Banking not available");
             sender.sendMessage(Component.text("Banking is not available.", NamedTextColor.RED));
             return true;
         }
         
         if (args.length == 1) {
             // List all accounts
+            plugin.debug("CotrCommand.handleBalance() - Listing all accounts for player {}", player.getName());
             Set<String> accounts = bankManager.getPlayerAccounts(player);
+            plugin.debug("CotrCommand.handleBalance() - Found {} accounts", accounts.size());
             if (accounts.isEmpty()) {
                 sender.sendMessage(Component.text("You have no bank accounts.", NamedTextColor.YELLOW));
                 return true;
