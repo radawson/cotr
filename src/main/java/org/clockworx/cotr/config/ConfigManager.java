@@ -51,6 +51,9 @@ public class ConfigManager {
     private String resourcePackUrl;
     private String resourcePackHash;
     private boolean resourcePackPrompt;
+    private int resourcePackMaxRetries;
+    private boolean resourcePackKickOnDecline;
+    private int resourcePackRetryDelay;
     
     /**
      * Creates a new ConfigManager for the specified plugin.
@@ -353,11 +356,34 @@ public class ConfigManager {
         resourcePackUrl = config.getString("resource-pack.url", "");
         resourcePackHash = config.getString("resource-pack.hash", "");
         resourcePackPrompt = config.getBoolean("resource-pack.prompt", true);
+        resourcePackMaxRetries = config.getInt("resource-pack.max-retries", 3);
+        resourcePackKickOnDecline = config.getBoolean("resource-pack.kick-on-decline", false);
+        resourcePackRetryDelay = config.getInt("resource-pack.retry-delay", 100);
+        
+        // Validate max retries
+        if (resourcePackMaxRetries < 0) {
+            plugin.getLogger().warning("Invalid resource-pack.max-retries: " + resourcePackMaxRetries + ". Using default: 3");
+            resourcePackMaxRetries = 3;
+        }
+        
+        // Validate retry delay
+        if (resourcePackRetryDelay < 1) {
+            plugin.getLogger().warning("Invalid resource-pack.retry-delay: " + resourcePackRetryDelay + ". Using default: 100");
+            resourcePackRetryDelay = 100;
+        }
         
         if (resourcePackUrl != null && !resourcePackUrl.isEmpty()) {
-            plugin.getLogger().info("Resource pack URL configured: " + resourcePackUrl);
+            String urlDisplay = resourcePackUrl.length() > 60 ? resourcePackUrl.substring(0, 57) + "..." : resourcePackUrl;
+            plugin.getLogger().info("Resource pack URL configured: " + urlDisplay);
             if (resourcePackHash != null && !resourcePackHash.isEmpty()) {
                 plugin.getLogger().info("Resource pack hash configured (SHA-1 verification enabled)");
+            }
+            plugin.getLogger().info("Resource pack retry settings: max=" + resourcePackMaxRetries + ", delay=" + resourcePackRetryDelay + " ticks");
+            if (resourcePackKickOnDecline) {
+                plugin.getLogger().info("Resource pack kick-on-decline enabled");
+                if (resourcePackPrompt) {
+                    plugin.getLogger().warning("kick-on-decline is enabled but prompt is true. For mandatory packs, set prompt: false in config.yml");
+                }
             }
         } else {
             plugin.getLogger().info("Resource pack URL not configured - automatic application disabled");
@@ -562,6 +588,33 @@ public class ConfigManager {
      */
     public boolean isResourcePackPrompt() {
         return resourcePackPrompt;
+    }
+    
+    /**
+     * Gets the maximum number of retry attempts for resource pack application.
+     * 
+     * @return The maximum number of retries (0 = no retry)
+     */
+    public int getResourcePackMaxRetries() {
+        return resourcePackMaxRetries;
+    }
+    
+    /**
+     * Checks if players should be kicked when they decline the resource pack.
+     * 
+     * @return true if players should be kicked on decline
+     */
+    public boolean isResourcePackKickOnDecline() {
+        return resourcePackKickOnDecline;
+    }
+    
+    /**
+     * Gets the delay between retry attempts in ticks.
+     * 
+     * @return The retry delay in ticks (20 ticks = 1 second)
+     */
+    public int getResourcePackRetryDelay() {
+        return resourcePackRetryDelay;
     }
     
     /**

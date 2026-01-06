@@ -23,6 +23,18 @@ resource-pack:
   # Whether to prompt players to accept the resource pack
   # If false, resource pack will be applied automatically (may require server.properties setting)
   prompt: true
+  
+  # Maximum number of retry attempts (0 = no retry, default: 3)
+  # If a player declines or download fails, the plugin will retry up to this many times
+  max-retries: 3
+  
+  # Whether to kick players who decline the resource pack (requires prompt: false)
+  # If true and prompt is false, players who decline will be kicked from the server
+  kick-on-decline: false
+  
+  # Delay between retries in ticks (20 ticks = 1 second, default: 100 = 5 seconds)
+  # Uses exponential backoff: first retry after this delay, second after 2x, third after 4x
+  retry-delay: 100
 
 banking:
   enabled: true
