@@ -27,6 +27,8 @@ public class DatabaseBankStorage implements BankStorage {
     private final String databaseType;
     private final String connectionString;
     private final String tablePrefix;
+    private final String username;
+    private final String password;
     private HikariDataSource dataSource;
     private ExecutorService executorService;
     private static final int CURRENT_SCHEMA_VERSION = 1;
@@ -38,15 +40,21 @@ public class DatabaseBankStorage implements BankStorage {
      * @param databaseType The database type ("sqlite" or "mysql")
      * @param connectionString The database connection string
      * @param tablePrefix The table prefix (empty string for no prefix)
+     * @param username The database username (for MySQL, null for SQLite)
+     * @param password The database password (for MySQL, null for SQLite)
      */
     public DatabaseBankStorage(@NotNull CoinOfTheRealmPlugin plugin,
                               @NotNull String databaseType,
                               @NotNull String connectionString,
-                              @NotNull String tablePrefix) {
+                              @NotNull String tablePrefix,
+                              @Nullable String username,
+                              @Nullable String password) {
         this.plugin = plugin;
         this.databaseType = databaseType.toLowerCase();
         this.connectionString = connectionString;
         this.tablePrefix = tablePrefix != null ? tablePrefix : "";
+        this.username = username;
+        this.password = password;
     }
     
     /**
@@ -75,9 +83,12 @@ public class DatabaseBankStorage implements BankStorage {
                 HikariConfig config = new HikariConfig();
                 
                 if ("sqlite".equals(databaseType)) {
-                    config.setJdbcUrl("jdbc:sqlite:" + connectionString);
+                    String sqliteUrl = "jdbc:sqlite:" + connectionString;
+                    config.setJdbcUrl(sqliteUrl);
                     // Use relocated class name (relocated by shadowJar)
                     config.setDriverClassName("org.clockworx.cotr.libs.sqlite.JDBC");
+                    plugin.debug("DatabaseBankStorage.initialize() - Final SQLite connection URL: {}", sqliteUrl);
+                    plugin.getLogger().info("Connecting to SQLite database: " + connectionString);
                     config.setMaximumPoolSize(1); // SQLite doesn't support multiple connections well
                     config.setConnectionTimeout(30000);
                     config.setIdleTimeout(600000);
@@ -87,6 +98,33 @@ public class DatabaseBankStorage implements BankStorage {
                     config.setJdbcUrl(connectionString);
                     // Use relocated class name (relocated by shadowJar)
                     config.setDriverClassName("org.clockworx.cotr.libs.mysql.jdbc.Driver");
+                    
+                    // Set username and password (required for MySQL)
+                    if (username != null && !username.isEmpty()) {
+                        config.setUsername(username);
+                        plugin.debug("DatabaseBankStorage.initialize() - MySQL username set: '{}'", username);
+                    } else {
+                        plugin.getLogger().warning("MySQL username is empty or null. Connection may fail.");
+                    }
+                    
+                    if (password != null) {
+                        config.setPassword(password);
+                        plugin.debug("DatabaseBankStorage.initialize() - MySQL password set: {}",
+                            password.isEmpty() ? "(empty)" : "***");
+                    } else {
+                        plugin.getLogger().warning("MySQL password is null. Connection may fail.");
+                    }
+                    
+                    // Log final connection URL for debugging (without password)
+                    String debugUrl = connectionString;
+                    if (username != null && !username.isEmpty()) {
+                        debugUrl = debugUrl.replaceFirst("jdbc:mysql://", 
+                            "jdbc:mysql://" + username + "@");
+                    }
+                    plugin.debug("DatabaseBankStorage.initialize() - Final MySQL connection URL: {}", debugUrl);
+                    plugin.getLogger().info("Connecting to MySQL database: " + 
+                        connectionString.replaceFirst("jdbc:mysql://", "").split("\\?")[0]);
+                    
                     config.setMaximumPoolSize(10);
                     config.setConnectionTimeout(30000);
                     config.setIdleTimeout(600000);

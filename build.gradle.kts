@@ -94,3 +94,8 @@ tasks.shadowJar {
   // Shadow plugin automatically includes all runtime dependencies by default
   // No need to explicitly set configurations
 }
+
+// Ensure shadowJar is executed during the build process
+tasks.build {
+  dependsOn(tasks.shadowJar)
+}
