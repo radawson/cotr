@@ -1,7 +1,5 @@
 package org.clockworx.cotr.bank;
 
-import net.thenextlvl.service.api.economy.bank.Bank;
-import net.thenextlvl.service.api.economy.bank.BankController;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
@@ -13,7 +11,6 @@ import org.jetbrains.annotations.Nullable;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 /**
  * BankManager - Integrates ServiceIO's BankController with AccountMembershipManager
@@ -38,7 +35,7 @@ public class BankManager {
     private final CoinOfTheRealmPlugin plugin;
     private final AccountMembershipManager membershipManager;
     private final ConfigManager configManager;
-    private BankController bankController;
+    private Object bankController; // Using Object to avoid class loading issues
     private boolean bankingEnabled;
     
     /**
@@ -60,6 +57,7 @@ public class BankManager {
     /**
      * Initializes the BankController from ServiceIO.
      * Checks if ServiceIO is available and banking is enabled in config.
+     * Uses reflection to avoid ClassNotFoundException when ServiceIO isn't installed.
      */
     private void initializeBankController() {
         if (!configManager.isBankingEnabled()) {
@@ -68,15 +66,23 @@ public class BankManager {
             return;
         }
         
-        bankController = plugin.getServer().getServicesManager().load(BankController.class);
-        
-        if (bankController == null) {
+        try {
+            // Use reflection to load BankController class without importing it
+            Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
+            bankController = plugin.getServer().getServicesManager().load(bankControllerClass);
+            
+            if (bankController == null) {
+                bankingEnabled = false;
+                plugin.getLogger().warning("ServiceIO BankController not found. Banking features disabled.");
+                plugin.getLogger().warning("Install ServiceIO plugin to enable banking features.");
+            } else {
+                bankingEnabled = true;
+                plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
+            }
+        } catch (ClassNotFoundException e) {
             bankingEnabled = false;
-            plugin.getLogger().warning("ServiceIO BankController not found. Banking features disabled.");
+            plugin.getLogger().warning("ServiceIO not found. Banking features disabled.");
             plugin.getLogger().warning("Install ServiceIO plugin to enable banking features.");
-        } else {
-            bankingEnabled = true;
-            plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
         }
     }
     
@@ -95,7 +101,7 @@ public class BankManager {
      * @return The BankController, or null if not available
      */
     @Nullable
-    public BankController getBankController() {
+    public Object getBankController() {
         return bankController;
     }
     
@@ -125,7 +131,7 @@ public class BankManager {
         }
         
         // Create bank in BankController (owner is the player UUID)
-        return bankController.createBank(owner.getUniqueId(), accountName)
+        return BankReflectionHelper.createBank(bankController, owner.getUniqueId(), accountName)
             .thenApply(bank -> {
                 if (bank != null) {
                     plugin.getLogger().info("Created account '" + accountName + "' for player " + owner.getName());
@@ -148,10 +154,10 @@ public class BankManager {
      * 
      * @param player The player requesting access
      * @param accountName The account name
-     * @return A CompletableFuture that completes with the Bank, or null if no access
+     * @return A CompletableFuture that completes with the Bank (as Object), or null if no access
      */
     @NotNull
-    public CompletableFuture<Bank> getAccount(@NotNull Player player, @NotNull String accountName) {
+    public CompletableFuture<Object> getAccount(@NotNull Player player, @NotNull String accountName) {
         if (!isBankingEnabled()) {
             return CompletableFuture.completedFuture(null);
         }
@@ -161,7 +167,7 @@ public class BankManager {
             return CompletableFuture.completedFuture(null);
         }
         
-        return bankController.loadBank(accountName)
+        return BankReflectionHelper.loadBank(bankController, accountName)
             .exceptionally(ex -> {
                 plugin.getLogger().warning("Failed to load bank account '" + accountName + "': " + ex.getMessage());
                 return null;
@@ -214,7 +220,7 @@ public class BankManager {
                 if (bank == null) {
                     return null;
                 }
-                BigDecimal balance = bank.getBalance();
+                BigDecimal balance = BankReflectionHelper.getBalance(bank);
                 // Convert BigDecimal to int (round to nearest integer)
                 return balance != null ? balance.intValue() : null;
             });
@@ -269,7 +275,7 @@ public class BankManager {
                     
                     // Convert int to BigDecimal for API call
                     BigDecimal depositAmount = BigDecimal.valueOf(amount);
-                    BigDecimal newBalance = bank.deposit(depositAmount);
+                    BigDecimal newBalance = BankReflectionHelper.deposit(bank, depositAmount);
                     if (newBalance == null) {
                         // Refund coins if deposit failed
                         giveCoinsToPlayer(player, amount);
@@ -317,7 +323,7 @@ public class BankManager {
                     }
                     
                     // Convert BigDecimal balance to int for comparison
-                    BigDecimal balance = bank.getBalance();
+                    BigDecimal balance = BankReflectionHelper.getBalance(bank);
                     int balanceInt = balance != null ? balance.intValue() : 0;
                     if (balanceInt < amount) {
                         return CompletableFuture.completedFuture(false);
@@ -325,7 +331,7 @@ public class BankManager {
                     
                     // Convert int to BigDecimal for API call
                     BigDecimal withdrawAmount = BigDecimal.valueOf(amount);
-                    BigDecimal newBalance = bank.withdraw(withdrawAmount);
+                    BigDecimal newBalance = BankReflectionHelper.withdraw(bank, withdrawAmount);
                     if (newBalance != null) {
                         // Give coins to player
                         giveCoinsToPlayer(player, amount);
@@ -370,20 +376,20 @@ public class BankManager {
             }
             
             // Get both banks
-            CompletableFuture<Bank> fromBankFuture = getAccount(from, fromAccount);
-            CompletableFuture<Bank> toBankFuture = getAccount(to, targetAccount);
+            CompletableFuture<Object> fromBankFuture = getAccount(from, fromAccount);
+            CompletableFuture<Object> toBankFuture = getAccount(to, targetAccount);
             
             return CompletableFuture.allOf(fromBankFuture, toBankFuture)
                 .thenCompose(v -> {
-                    Bank fromBank = fromBankFuture.join();
-                    Bank toBank = toBankFuture.join();
+                    Object fromBank = fromBankFuture.join();
+                    Object toBank = toBankFuture.join();
                     
                     if (fromBank == null || toBank == null) {
                         return CompletableFuture.completedFuture(false);
                     }
                     
                     // Convert BigDecimal balance to int for comparison
-                    BigDecimal fromBalance = fromBank.getBalance();
+                    BigDecimal fromBalance = BankReflectionHelper.getBalance(fromBank);
                     int fromBalanceInt = fromBalance != null ? fromBalance.intValue() : 0;
                     if (fromBalanceInt < amount) {
                         return CompletableFuture.completedFuture(false);
@@ -393,13 +399,13 @@ public class BankManager {
                     BigDecimal transferAmount = BigDecimal.valueOf(amount);
                     
                     // Withdraw from source
-                    BigDecimal newFromBalance = fromBank.withdraw(transferAmount);
+                    BigDecimal newFromBalance = BankReflectionHelper.withdraw(fromBank, transferAmount);
                     if (newFromBalance == null) {
                         return CompletableFuture.completedFuture(false);
                     }
                     
                     // Deposit to target
-                    BigDecimal newToBalance = toBank.deposit(transferAmount);
+                    BigDecimal newToBalance = BankReflectionHelper.deposit(toBank, transferAmount);
                     return CompletableFuture.completedFuture(newToBalance != null);
                 });
         });
@@ -482,7 +488,7 @@ public class BankManager {
         }
         
         // Delete from BankController
-        return bankController.loadBank(accountName)
+        return BankReflectionHelper.loadBank(bankController, accountName)
             .thenCompose(bank -> {
                 if (bank == null) {
                     // Bank doesn't exist, just remove membership
@@ -490,7 +496,7 @@ public class BankManager {
                     return CompletableFuture.completedFuture(true);
                 }
                 
-                return bankController.deleteBank(bank)
+                return BankReflectionHelper.deleteBank(bankController, bank)
                     .thenApply(success -> {
                         if (success) {
                             membershipManager.deleteAccount(accountName);

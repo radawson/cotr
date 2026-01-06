@@ -6,6 +6,7 @@ import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
@@ -79,10 +80,9 @@ public class CoinItem {
         meta.lore(lore);
 
         // Set item model for resource pack texture (newer Paper API)
-        String modelNamespace = coinConfig.getModelNamespace();
-        String modelKey = coinConfig.getModelKey();
-        if (modelNamespace != null && modelKey != null) {
-            meta.setItemModel(new org.bukkit.NamespacedKey(modelNamespace, modelKey));
+        NamespacedKey modelKey = coinConfig.getItemModelKey();
+        if (modelKey != null) {
+            meta.setItemModel(modelKey);
         } else {
             // Fallback to CustomModelData if model not specified
             meta.setCustomModelData(coinConfig.getCustomModelData());
