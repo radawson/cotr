@@ -1,7 +1,8 @@
 package org.clockworx.cotr;
 
 import org.bukkit.NamespacedKey;
-import org.bukkit.command.PluginCommand;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -10,6 +11,8 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.listener.CoinListener;
+
+import java.util.List;
 
 /**
  * Coin of the Realm Plugin
@@ -59,19 +62,34 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     
     /**
      * Registers the /cotr command with the server.
-     * Uses Paper's native command registration system.
+     * Uses Paper's programmatic command registration system.
      */
     private void registerCommands() {
-        // Get the command from plugin.yml
-        PluginCommand cotrCommand = getCommand("cotr");
-        if (cotrCommand != null) {
-            CotrCommand executor = new CotrCommand();
-            cotrCommand.setExecutor(executor);
-            cotrCommand.setTabCompleter(executor);
-            getLogger().info("Registered /cotr command");
-        } else {
-            getLogger().warning("Failed to register /cotr command - command not found in plugin.yml");
-        }
+        CotrCommand executor = new CotrCommand();
+        
+        // Create a Command object for Paper plugins
+        Command cotrCommand = new Command("cotr") {
+            @Override
+            public boolean execute(CommandSender sender, String commandLabel, String[] args) {
+                return executor.onCommand(sender, this, commandLabel, args);
+            }
+            
+            @Override
+            public List<String> tabComplete(CommandSender sender, String alias, String[] args) {
+                return executor.onTabComplete(sender, this, alias, args);
+            }
+        };
+        
+        cotrCommand.setDescription("Coin of the Realm command");
+        cotrCommand.setUsage("/<command> <drop|give> [arguments]");
+        cotrCommand.setAliases(java.util.Arrays.asList("coin", "coins"));
+        cotrCommand.setPermission("cotr.command.use");
+        cotrCommand.setPermissionMessage("You do not have permission to use this command.");
+        
+        // Register the command using CommandMap
+        getServer().getCommandMap().register("cotr", cotrCommand);
+        
+        getLogger().info("Registered /cotr command with Paper command system");
     }
     
     /**
