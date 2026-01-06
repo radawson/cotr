@@ -87,8 +87,9 @@ tasks.shadowJar {
   archiveBaseName.set("CoinOfTheRealm")
   archiveVersion.set(project.version.toString())
   
-  // Set the classifier to empty so it replaces the regular JAR
-  archiveClassifier.set("")
+  // Use "-all" classifier to make it clear this is the fat JAR with dependencies
+  // This prevents confusion with the regular JAR (which doesn't have dependencies)
+  archiveClassifier.set("all")
   
   // Shadow plugin automatically includes all runtime dependencies by default
   // No need to explicitly set configurations
