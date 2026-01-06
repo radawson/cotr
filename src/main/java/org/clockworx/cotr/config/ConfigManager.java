@@ -37,7 +37,17 @@ public class ConfigManager {
     private boolean debugEnabled;
     private boolean bankingEnabled;
     private String defaultAccountPattern;
-    private String membershipStorage;
+    private boolean useOwnController;
+    private String servicePriority;
+    private String bankStorageType;
+    private String databaseType;
+    private String databasePrefix;
+    private String databaseFile;
+    private String databaseHost;
+    private int databasePort;
+    private String databaseName;
+    private String databaseUsername;
+    private String databasePassword;
     private String resourcePackUrl;
     private String resourcePackHash;
     private boolean resourcePackPrompt;
@@ -301,9 +311,39 @@ public class ConfigManager {
     private void loadBankingConfig() {
         bankingEnabled = config.getBoolean("banking.enabled", true);
         defaultAccountPattern = config.getString("banking.default-account-pattern", "{player-uuid}-main");
-        membershipStorage = config.getString("banking.membership-storage", "yaml");
+        useOwnController = config.getBoolean("banking.use-own-controller", true);
+        servicePriority = config.getString("banking.service-priority", "NORMAL");
+        
+        // Bank storage configuration
+        bankStorageType = config.getString("banking.storage.type", "database");
+        databaseType = config.getString("banking.storage.database.type", "sqlite");
+        databasePrefix = config.getString("banking.storage.database.prefix", "");
+        databaseFile = config.getString("banking.storage.database.file", "banks.db");
+        databaseHost = config.getString("banking.storage.database.host", "localhost");
+        databasePort = config.getInt("banking.storage.database.port", 3306);
+        databaseName = config.getString("banking.storage.database.database", "cotr");
+        databaseUsername = config.getString("banking.storage.database.username", "cotr");
+        databasePassword = config.getString("banking.storage.database.password", "");
         
         plugin.getLogger().info("Banking enabled: " + bankingEnabled);
+        if (bankingEnabled) {
+            plugin.getLogger().info("Bank storage type: " + bankStorageType);
+            if ("database".equals(bankStorageType)) {
+                plugin.getLogger().info("Database type: " + databaseType);
+                if (!databasePrefix.isEmpty()) {
+                    plugin.getLogger().info("Database table prefix: '" + databasePrefix + "'");
+                }
+                if ("sqlite".equals(databaseType)) {
+                    plugin.getLogger().info("SQLite database file: " + databaseFile);
+                } else if ("mysql".equals(databaseType)) {
+                    plugin.getLogger().info("MySQL database: " + databaseName + "@" + databaseHost + ":" + databasePort);
+                }
+            }
+            plugin.getLogger().info("Use own BankController: " + useOwnController);
+            if (useOwnController) {
+                plugin.getLogger().info("ServiceIO registration priority: " + servicePriority);
+            }
+        }
     }
     
     /**
@@ -362,14 +402,135 @@ public class ConfigManager {
         return defaultAccountPattern;
     }
     
+    
     /**
-     * Gets the membership storage type.
+     * Checks if we should use our own BankController.
      * 
-     * @return The storage type ("yaml" or "database")
+     * @return true if we should register our own BankController
+     */
+    public boolean isUseOwnController() {
+        return useOwnController;
+    }
+    
+    /**
+     * Gets the ServiceIO registration priority.
+     * 
+     * @return The priority string (LOWEST, LOW, NORMAL, HIGH, HIGHEST)
      */
     @NotNull
-    public String getMembershipStorage() {
-        return membershipStorage;
+    public String getServicePriority() {
+        return servicePriority;
+    }
+    
+    /**
+     * Gets the bank storage type.
+     * 
+     * @return The storage type ("database" or "yaml")
+     */
+    @NotNull
+    public String getBankStorageType() {
+        return bankStorageType;
+    }
+    
+    /**
+     * Gets the database type.
+     * 
+     * @return The database type ("sqlite" or "mysql")
+     */
+    @NotNull
+    public String getDatabaseType() {
+        return databaseType;
+    }
+    
+    /**
+     * Gets the database table prefix.
+     * 
+     * @return The table prefix (empty string if no prefix)
+     */
+    @NotNull
+    public String getDatabasePrefix() {
+        return databasePrefix != null ? databasePrefix : "";
+    }
+    
+    /**
+     * Gets the database file path (for SQLite).
+     * 
+     * @return The database file path
+     */
+    @NotNull
+    public String getDatabaseFile() {
+        return databaseFile;
+    }
+    
+    /**
+     * Gets the database host (for MySQL).
+     * 
+     * @return The database host
+     */
+    @NotNull
+    public String getDatabaseHost() {
+        return databaseHost;
+    }
+    
+    /**
+     * Gets the database port (for MySQL).
+     * 
+     * @return The database port
+     */
+    public int getDatabasePort() {
+        return databasePort;
+    }
+    
+    /**
+     * Gets the database name (for MySQL).
+     * 
+     * @return The database name
+     */
+    @NotNull
+    public String getDatabaseName() {
+        return databaseName;
+    }
+    
+    /**
+     * Gets the database username (for MySQL).
+     * 
+     * @return The database username
+     */
+    @NotNull
+    public String getDatabaseUsername() {
+        return databaseUsername;
+    }
+    
+    /**
+     * Gets the database password (for MySQL).
+     * 
+     * @return The database password
+     */
+    @NotNull
+    public String getDatabasePassword() {
+        return databasePassword;
+    }
+    
+    /**
+     * Gets the database connection string.
+     * For SQLite, returns the file path.
+     * For MySQL, returns a JDBC connection string.
+     * 
+     * @return The connection string
+     */
+    @NotNull
+    public String getDatabaseConnectionString() {
+        if ("sqlite".equals(databaseType)) {
+            // For SQLite, return the file path (will be prepended with jdbc:sqlite: in DatabaseBankStorage)
+            File dbFile = new File(plugin.getDataFolder(), databaseFile);
+            return dbFile.getAbsolutePath();
+        } else if ("mysql".equals(databaseType)) {
+            // For MySQL, return JDBC connection string
+            return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true",
+                databaseHost, databasePort, databaseName);
+        } else {
+            throw new IllegalStateException("Unsupported database type: " + databaseType);
+        }
     }
     
     /**

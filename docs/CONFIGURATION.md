@@ -178,22 +178,7 @@ banking:
 - Default accounts are created automatically when a player first uses banking features
 - Players can create additional accounts with custom names using `/cotr account create <name>`
 
-### `banking.membership-storage`
-
-**Type**: String  
-**Default**: `"yaml"`  
-**Required**: No  
-**Options**: `"yaml"`
-
-Specifies the storage backend for account membership data (which players have access to which accounts).
-
-**Current Options**:
-- `"yaml"`: Stores membership data in `account-memberships.yml` file
-
-**Notes**:
-- Currently only YAML storage is supported
-- Database storage may be added in future versions
-- Membership data is separate from ServiceIO's bank data
+**Note**: Account membership data is now stored in the database alongside bank data. The `membership-storage` configuration option has been removed. All banking data (banks and memberships) is stored in the same database.
 - The membership file is located at `plugins/CoinOfTheRealm/account-memberships.yml`
 
 ## Complete Configuration Example

@@ -230,6 +230,225 @@ Gets an account if the player has access.
 
 **Note**: The returned object is ServiceIO's Bank type, accessed via reflection.
 
+## ServiceIO Integration
+
+Coin of the Realm implements the ServiceIO BankController interface, allowing other plugins to discover and use our banking system.
+
+### Getting the BankController
+
+```java
+import net.thenextlvl.service.api.economy.bank.BankController;
+import org.bukkit.plugin.ServicesManager;
+
+ServicesManager servicesManager = getServer().getServicesManager();
+BankController bankController = servicesManager.load(BankController.class);
+
+if (bankController != null) {
+    // Use the BankController
+    // Check if it's Coin of the Realm's implementation
+    if (bankController instanceof org.clockworx.cotr.bank.impl.CotrBankController) {
+        // It's our implementation
+    }
+}
+```
+
+### BankController API
+
+The BankController provides methods for managing banks:
+
+#### `createBank(UUID owner, String name)`
+Creates a new global bank account.
+
+**Parameters**:
+- `owner` (UUID): The bank owner's UUID
+- `name` (String): Unique bank name
+
+**Returns**: `CompletableFuture<Bank>` - The created bank, or fails if already exists
+
+#### `createBank(UUID owner, String name, World world)`
+Creates a new world-specific bank account.
+
+**Parameters**:
+- `owner` (UUID): The bank owner's UUID
+- `name` (String): Unique bank name
+- `world` (World): The world for this bank
+
+**Returns**: `CompletableFuture<Bank>` - The created bank, or fails if already exists
+
+#### `loadBank(String name)`
+Loads a bank by name.
+
+**Parameters**:
+- `name` (String): The bank name
+
+**Returns**: `CompletableFuture<Bank>` - The bank, or `null` if not found
+
+#### `loadBank(UUID owner)`
+Loads a global bank by owner UUID.
+
+**Parameters**:
+- `owner` (UUID): The owner UUID
+
+**Returns**: `CompletableFuture<Bank>` - The bank, or `null` if not found
+
+#### `loadBank(UUID owner, World world)`
+Loads a world-specific bank by owner and world.
+
+**Parameters**:
+- `owner` (UUID): The owner UUID
+- `world` (World): The world
+
+**Returns**: `CompletableFuture<Bank>` - The bank, or `null` if not found
+
+#### `deleteBank(String name)`
+Deletes a bank by name.
+
+**Parameters**:
+- `name` (String): The bank name
+
+**Returns**: `CompletableFuture<Boolean>` - `true` if deleted, `false` if not found
+
+#### `getBank(String name)`
+Gets a cached bank by name (synchronous).
+
+**Parameters**:
+- `name` (String): The bank name
+
+**Returns**: `Optional<Bank>` - The bank if cached
+
+#### `format(Number amount)`
+Formats a currency amount as a string.
+
+**Parameters**:
+- `amount` (Number): The amount to format
+
+**Returns**: `String` - Formatted string (e.g., "50 Coins of the Realm")
+
+#### `fractionalDigits()`
+Returns the number of fractional digits supported.
+
+**Returns**: `int` - Always returns `0` (coins are whole numbers)
+
+### Bank API
+
+The Bank interface provides account operations:
+
+#### `getOwner()`
+Gets the bank owner's UUID.
+
+**Returns**: `UUID` - The owner UUID
+
+#### `getName()`
+Gets the bank name.
+
+**Returns**: `String` - The bank name
+
+#### `getWorld()`
+Gets the world for this bank (if world-specific).
+
+**Returns**: `Optional<World>` - The world, or empty for global banks
+
+#### `getBalance()`
+Gets the current balance.
+
+**Returns**: `BigDecimal` - The balance
+
+#### `deposit(Number amount)`
+Deposits funds into the bank.
+
+**Parameters**:
+- `amount` (Number): The amount to deposit
+
+**Returns**: `BigDecimal` - The new balance
+
+**Throws**: `IllegalArgumentException` if amount is negative
+
+#### `withdraw(Number amount)`
+Withdraws funds from the bank.
+
+**Parameters**:
+- `amount` (Number): The amount to withdraw
+
+**Returns**: `BigDecimal` - The new balance
+
+**Throws**: 
+- `IllegalArgumentException` if amount is negative
+- `IllegalStateException` if insufficient funds
+
+#### `setBalance(Number amount)`
+Sets the balance directly.
+
+**Parameters**:
+- `amount` (Number): The new balance
+
+#### `addMember(UUID member)`
+Adds a member to the bank.
+
+**Parameters**:
+- `member` (UUID): The member UUID
+
+**Returns**: `boolean` - `true` if added
+
+#### `removeMember(UUID member)`
+Removes a member from the bank.
+
+**Parameters**:
+- `member` (UUID): The member UUID
+
+**Returns**: `boolean` - `true` if removed
+
+#### `isMember(UUID member)`
+Checks if a UUID is a member.
+
+**Parameters**:
+- `member` (UUID): The member UUID
+
+**Returns**: `boolean` - `true` if member
+
+#### `getMembers()`
+Gets all member UUIDs.
+
+**Returns**: `Set<UUID>` - Set of member UUIDs
+
+### Example: Using BankController
+
+```java
+// Get BankController from ServiceIO
+BankController bankController = getServer().getServicesManager().load(BankController.class);
+
+if (bankController == null) {
+    getLogger().warning("No BankController available");
+    return;
+}
+
+// Create a bank account
+UUID playerUuid = player.getUniqueId();
+CompletableFuture<Bank> bankFuture = bankController.createBank(playerUuid, "my-account");
+
+bankFuture.thenAccept(bank -> {
+    if (bank != null) {
+        // Deposit funds
+        BigDecimal newBalance = bank.deposit(BigDecimal.valueOf(100));
+        player.sendMessage("Deposited! New balance: " + bankController.format(newBalance));
+        
+        // Withdraw funds
+        try {
+            BigDecimal afterWithdraw = bank.withdraw(BigDecimal.valueOf(25));
+            player.sendMessage("Withdrew! New balance: " + bankController.format(afterWithdraw));
+        } catch (IllegalStateException e) {
+            player.sendMessage("Insufficient funds!");
+        }
+    }
+}).exceptionally(ex -> {
+    if (ex.getCause() instanceof IllegalStateException) {
+        player.sendMessage("Account already exists!");
+    } else {
+        getLogger().severe("Error creating bank", ex);
+    }
+    return null;
+});
+```
+
 ### Balance Operations
 
 #### `getBalance(Player player, String accountName)`

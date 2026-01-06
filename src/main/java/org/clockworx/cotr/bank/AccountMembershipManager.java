@@ -1,14 +1,13 @@
 package org.clockworx.cotr.bank;
 
-import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
+import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -20,7 +19,7 @@ import java.util.stream.Collectors;
  * - Accounts to have multiple players (shared/guild accounts)
  * 
  * The manager stores memberships in memory for fast access and persists them to
- * account-memberships.yml for durability across server restarts.
+ * the database for durability across server restarts.
  * 
  * This is a custom layer on top of ServiceIO's BankController, which only supports
  * one owner per bank. We use the bank name as the account identifier and maintain
@@ -29,113 +28,142 @@ import java.util.stream.Collectors;
 public class AccountMembershipManager {
     
     private final CoinOfTheRealmPlugin plugin;
+    private final DatabaseBankStorage storage;
     private final Map<String, Set<AccountMembership>> accountMemberships; // accountName -> memberships
     private final Map<UUID, Set<AccountMembership>> playerMemberships; // playerUuid -> memberships
-    private final File membershipFile;
     
     /**
      * Creates a new AccountMembershipManager.
      * 
      * @param plugin The plugin instance
+     * @param storage The database storage (can be null if not yet initialized)
      */
-    public AccountMembershipManager(@NotNull CoinOfTheRealmPlugin plugin) {
+    public AccountMembershipManager(@NotNull CoinOfTheRealmPlugin plugin, @Nullable DatabaseBankStorage storage) {
         this.plugin = plugin;
+        this.storage = storage;
         this.accountMemberships = new ConcurrentHashMap<>();
         this.playerMemberships = new ConcurrentHashMap<>();
-        this.membershipFile = new File(plugin.getDataFolder(), "account-memberships.yml");
     }
     
     /**
-     * Loads account memberships from the YAML file.
+     * Loads account memberships from the database.
      * Called on plugin enable.
+     * Also migrates from YAML if it exists.
      */
     public void load() {
-        if (!membershipFile.exists()) {
-            plugin.getLogger().info("No account-memberships.yml found, starting with empty memberships");
+        if (storage == null) {
+            plugin.getLogger().warning("Database storage not available, cannot load memberships");
             return;
         }
         
-        FileConfiguration config = YamlConfiguration.loadConfiguration(membershipFile);
+        plugin.debug("AccountMembershipManager.load() - Loading memberships from database");
         
-        if (!config.contains("accounts")) {
-            plugin.getLogger().info("No accounts found in account-memberships.yml");
-            return;
-        }
+        // First, try to migrate from YAML if it exists (synchronously)
+        migrateFromYaml();
         
-        int loadedCount = 0;
-        for (String accountName : config.getConfigurationSection("accounts").getKeys(false)) {
-            String path = "accounts." + accountName;
-            // Owner UUID is stored but we load all members from the members list
-            config.getString(path + ".owner"); // Read but don't need to store separately
-            List<Map<?, ?>> membersList = config.getMapList(path + ".members");
+        // Load all memberships from database (synchronously wait for completion)
+        try {
+            List<DatabaseBankStorage.MembershipRecord> allRecords = storage.loadAllMemberships().join();
             
-            Set<AccountMembership> memberships = new HashSet<>();
+            // Group memberships by account name
+            Map<String, Set<AccountMembership>> membershipsByAccount = new HashMap<>();
             
-            for (Map<?, ?> memberData : membersList) {
-                UUID playerUuid = UUID.fromString((String) memberData.get("uuid"));
-                AccountRole role = AccountRole.valueOf((String) memberData.get("role"));
-                long createdAt = memberData.containsKey("joined") ? 
-                    ((Number) memberData.get("joined")).longValue() : System.currentTimeMillis();
+            for (DatabaseBankStorage.MembershipRecord record : allRecords) {
+                AccountRole role = AccountRole.valueOf(record.getRole());
+                AccountMembership membership = new AccountMembership(
+                    record.getAccountName(),
+                    record.getPlayerUuid(),
+                    role,
+                    record.getCreatedAt()
+                );
                 
-                AccountMembership membership = new AccountMembership(accountName, playerUuid, role, createdAt);
-                memberships.add(membership);
+                // Add to account index
+                membershipsByAccount.computeIfAbsent(record.getAccountName(), 
+                    k -> ConcurrentHashMap.newKeySet()).add(membership);
                 
                 // Add to player index
-                playerMemberships.computeIfAbsent(playerUuid, k -> ConcurrentHashMap.newKeySet()).add(membership);
-                loadedCount++;
+                playerMemberships.computeIfAbsent(record.getPlayerUuid(), 
+                    k -> ConcurrentHashMap.newKeySet()).add(membership);
             }
             
-            accountMemberships.put(accountName, memberships);
+            // Update account memberships map
+            accountMemberships.putAll(membershipsByAccount);
+            
+            int totalMemberships = accountMemberships.values().stream().mapToInt(Set::size).sum();
+            plugin.getLogger().info("Loaded " + totalMemberships + " account memberships from " + 
+                accountMemberships.size() + " accounts");
+        } catch (Exception e) {
+            plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load memberships from database", e);
         }
-        
-        plugin.getLogger().info("Loaded " + loadedCount + " account memberships from " + 
-                              accountMemberships.size() + " accounts");
     }
     
     /**
-     * Saves account memberships to the YAML file.
-     * Called on plugin disable and after membership changes.
+     * Migrates membership data from YAML to database if YAML file exists.
      */
-    public void save() {
-        FileConfiguration config = new YamlConfiguration();
-        
-        for (Map.Entry<String, Set<AccountMembership>> entry : accountMemberships.entrySet()) {
-            String accountName = entry.getKey();
-            Set<AccountMembership> memberships = entry.getValue();
-            
-            // Find the owner (should be the one with OWNER role)
-            UUID ownerUuid = memberships.stream()
-                .filter(m -> m.getRole() == AccountRole.OWNER)
-                .map(AccountMembership::getPlayerUuid)
-                .findFirst()
-                .orElse(null);
-            
-            if (ownerUuid == null) {
-                plugin.getLogger().warning("Account " + accountName + " has no owner, skipping");
-                continue;
-            }
-            
-            String path = "accounts." + accountName;
-            config.set(path + ".owner", ownerUuid.toString());
-            
-            List<Map<String, Object>> membersList = new ArrayList<>();
-            for (AccountMembership membership : memberships) {
-                Map<String, Object> memberData = new HashMap<>();
-                memberData.put("uuid", membership.getPlayerUuid().toString());
-                memberData.put("role", membership.getRole().name());
-                memberData.put("joined", membership.getCreatedAt());
-                membersList.add(memberData);
-            }
-            
-            config.set(path + ".members", membersList);
+    private void migrateFromYaml() {
+        File yamlFile = new File(plugin.getDataFolder(), "account-memberships.yml");
+        if (!yamlFile.exists()) {
+            plugin.debug("AccountMembershipManager.migrateFromYaml() - No YAML file found, skipping migration");
+            return;
         }
+        
+        plugin.getLogger().info("Found account-memberships.yml, migrating to database...");
         
         try {
-            config.save(membershipFile);
-            plugin.getLogger().info("Saved account memberships to account-memberships.yml");
-        } catch (IOException e) {
-            plugin.getLogger().severe("Failed to save account memberships: " + e.getMessage());
+            org.bukkit.configuration.file.FileConfiguration config = 
+                org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(yamlFile);
+            
+            if (!config.contains("accounts")) {
+                plugin.debug("AccountMembershipManager.migrateFromYaml() - No accounts in YAML file");
+                return;
+            }
+            
+            List<CompletableFuture<Boolean>> migrationFutures = new ArrayList<>();
+            int[] migratedCount = {0};
+            
+            for (String accountName : config.getConfigurationSection("accounts").getKeys(false)) {
+                String path = "accounts." + accountName;
+                List<Map<?, ?>> membersList = config.getMapList(path + ".members");
+                
+                for (Map<?, ?> memberData : membersList) {
+                    UUID playerUuid = UUID.fromString((String) memberData.get("uuid"));
+                    String role = (String) memberData.get("role");
+                    long createdAt = memberData.containsKey("joined") ? 
+                        ((Number) memberData.get("joined")).longValue() : System.currentTimeMillis();
+                    
+                    // Check if already exists in database, then create if needed
+                    CompletableFuture<Boolean> future = storage.membershipExists(accountName, playerUuid)
+                        .thenCompose(exists -> {
+                            if (!exists) {
+                                return storage.createMembership(accountName, playerUuid, role, createdAt);
+                            }
+                            return CompletableFuture.completedFuture(false);
+                        });
+                    migrationFutures.add(future);
+                    migratedCount[0]++;
+                }
+            }
+            
+            // Wait for all migrations to complete
+            CompletableFuture.allOf(migrationFutures.toArray(new CompletableFuture[0])).join();
+            
+            plugin.getLogger().info("Migrated " + migratedCount[0] + " memberships from YAML to database");
+            plugin.getLogger().info("You can now delete account-memberships.yml if desired");
+            
+        } catch (Exception e) {
+            plugin.getLogger().log(java.util.logging.Level.WARNING, "Failed to migrate from YAML", e);
         }
+    }
+    
+    /**
+     * Saves account memberships to the database.
+     * Called on plugin disable. Note: Memberships are saved immediately when changed,
+     * so this is mainly for ensuring consistency.
+     */
+    public void save() {
+        // Memberships are saved immediately when changed, so this is a no-op
+        // Kept for API compatibility
+        plugin.debug("AccountMembershipManager.save() - Memberships are persisted immediately, no action needed");
     }
     
     /**
@@ -146,18 +174,31 @@ public class AccountMembershipManager {
      * @return true if the account was created, false if it already exists
      */
     public boolean createAccount(@NotNull String accountName, @NotNull UUID ownerUuid) {
+        if (storage == null) {
+            plugin.getLogger().warning("Database storage not available, cannot create account");
+            return false;
+        }
+        
         if (accountMemberships.containsKey(accountName)) {
             return false;
         }
         
         AccountMembership ownerMembership = new AccountMembership(accountName, ownerUuid, AccountRole.OWNER);
+        
+        // Save to database
+        storage.createMembership(accountName, ownerUuid, AccountRole.OWNER.name(), ownerMembership.getCreatedAt())
+            .thenAccept(success -> {
+                if (!success) {
+                    plugin.getLogger().warning("Failed to create membership in database for account: " + accountName);
+                }
+            });
+        
+        // Update in-memory cache
         Set<AccountMembership> memberships = ConcurrentHashMap.newKeySet();
         memberships.add(ownerMembership);
-        
         accountMemberships.put(accountName, memberships);
         playerMemberships.computeIfAbsent(ownerUuid, k -> ConcurrentHashMap.newKeySet()).add(ownerMembership);
         
-        save();
         return true;
     }
     
@@ -168,10 +209,18 @@ public class AccountMembershipManager {
      * @return true if the account was deleted, false if it didn't exist
      */
     public boolean deleteAccount(@NotNull String accountName) {
+        if (storage == null) {
+            plugin.getLogger().warning("Database storage not available, cannot delete account");
+            return false;
+        }
+        
         Set<AccountMembership> memberships = accountMemberships.remove(accountName);
         if (memberships == null) {
             return false;
         }
+        
+        // Delete from database
+        storage.deleteAllMemberships(accountName);
         
         // Remove from player index
         for (AccountMembership membership : memberships) {
@@ -184,7 +233,6 @@ public class AccountMembershipManager {
             }
         }
         
-        save();
         return true;
     }
     
@@ -197,6 +245,11 @@ public class AccountMembershipManager {
      * @return true if the member was added, false if already a member
      */
     public boolean addMember(@NotNull String accountName, @NotNull UUID playerUuid, @NotNull AccountRole role) {
+        if (storage == null) {
+            plugin.getLogger().warning("Database storage not available, cannot add member");
+            return false;
+        }
+        
         Set<AccountMembership> memberships = accountMemberships.get(accountName);
         if (memberships == null) {
             return false;
@@ -208,10 +261,19 @@ public class AccountMembershipManager {
         }
         
         AccountMembership membership = new AccountMembership(accountName, playerUuid, role);
+        
+        // Save to database
+        storage.createMembership(accountName, playerUuid, role.name(), membership.getCreatedAt())
+            .thenAccept(success -> {
+                if (!success) {
+                    plugin.getLogger().warning("Failed to add membership in database");
+                }
+            });
+        
+        // Update in-memory cache
         memberships.add(membership);
         playerMemberships.computeIfAbsent(playerUuid, k -> ConcurrentHashMap.newKeySet()).add(membership);
         
-        save();
         return true;
     }
     
@@ -223,6 +285,11 @@ public class AccountMembershipManager {
      * @return true if the member was removed, false if not a member
      */
     public boolean removeMember(@NotNull String accountName, @NotNull UUID playerUuid) {
+        if (storage == null) {
+            plugin.getLogger().warning("Database storage not available, cannot remove member");
+            return false;
+        }
+        
         Set<AccountMembership> memberships = accountMemberships.get(accountName);
         if (memberships == null) {
             return false;
@@ -242,6 +309,10 @@ public class AccountMembershipManager {
             return false;
         }
         
+        // Delete from database
+        storage.deleteMembership(accountName, playerUuid);
+        
+        // Update in-memory cache
         memberships.remove(membership);
         
         Set<AccountMembership> playerSet = playerMemberships.get(playerUuid);
@@ -252,7 +323,6 @@ public class AccountMembershipManager {
             }
         }
         
-        save();
         return true;
     }
     

@@ -21,6 +21,10 @@ dependencies {
   compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
   compileOnly("net.thenextlvl.services:service-io:2.3.1")
   
+  // Database dependencies
+  implementation("com.zaxxer:HikariCP:5.1.0")
+  implementation("org.xerial:sqlite-jdbc:3.45.3.0")
+  
   paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 }
 

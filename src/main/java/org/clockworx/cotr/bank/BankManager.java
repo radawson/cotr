@@ -3,6 +3,7 @@ package org.clockworx.cotr.bank;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
+import org.clockworx.cotr.bank.impl.CotrBankController;
 import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.item.CoinItem;
 import org.jetbrains.annotations.NotNull;
@@ -75,17 +76,20 @@ public class BankManager {
         org.bukkit.plugin.Plugin serviceIOPlugin = plugin.getServer().getPluginManager().getPlugin("ServiceIO");
         if (serviceIOPlugin == null || !serviceIOPlugin.isEnabled()) {
             bankingEnabled = false;
-            plugin.getLogger().warning("ServiceIO plugin not found or not enabled. Banking features disabled.");
-            plugin.getLogger().warning("Install and enable ServiceIO plugin to enable banking features.");
+            plugin.getLogger().info("ServiceIO plugin not found or not enabled. Banking features disabled.");
+            plugin.getLogger().info("Install and enable ServiceIO plugin (v2.3.1+) to enable banking features.");
+            plugin.getLogger().info("Download: https://github.com/TheNextLvl-net/service-io");
             plugin.debug("BankManager.initializeBankController() - ServiceIO plugin not found or disabled. serviceIOPlugin={}", serviceIOPlugin);
             return;
         }
         
+        String serviceIOVersion = serviceIOPlugin.getDescription().getVersion();
         plugin.debug("BankManager.initializeBankController() - ServiceIO plugin found: enabled={}, version={}", 
             serviceIOPlugin.isEnabled(), 
-            serviceIOPlugin.getDescription().getVersion());
+            serviceIOVersion);
         
-        plugin.getLogger().info("ServiceIO plugin detected. Attempting to load BankController...");
+        plugin.getLogger().info("ServiceIO plugin detected (v" + serviceIOVersion + "). Discovering BankController service...");
+        plugin.debug("BankManager.initializeBankController() - Starting ServiceIO service discovery process");
         
         try {
             // Try to load the BankController class
@@ -96,8 +100,23 @@ public class BankManager {
             plugin.getLogger().info("BankController class found: " + bankControllerClass.getName());
             plugin.debug("BankManager.initializeBankController() - Class loaded successfully: {}", bankControllerClass.getName());
             
-            // Try to get the service from ServicesManager
-            plugin.debug("BankManager.initializeBankController() - Querying ServicesManager for BankController");
+            // First, check if our own BankController is available and should be used
+            if (configManager.isUseOwnController()) {
+                CotrBankController ourController = plugin.getCotrBankController();
+                if (ourController != null) {
+                    plugin.debug("BankManager.initializeBankController() - Using our own BankController");
+                    bankController = ourController;
+                    bankingEnabled = true;
+                    plugin.getLogger().info("Using Coin of the Realm's built-in BankController");
+                    plugin.debug("BankManager.initializeBankController() - Our BankController initialized successfully");
+                    return;
+                } else {
+                    plugin.debug("BankManager.initializeBankController() - Our BankController not yet initialized, will check external controllers");
+                }
+            }
+            
+            // Try to get an external BankController from ServicesManager
+            plugin.debug("BankManager.initializeBankController() - Querying ServicesManager for external BankController");
             bankController = plugin.getServer().getServicesManager().load(bankControllerClass);
             plugin.debug("BankManager.initializeBankController() - ServicesManager.load() returned: {}", bankController != null ? "non-null" : "null");
             
@@ -105,33 +124,85 @@ public class BankManager {
                 // Try alternative: get provider directly
                 plugin.debug("BankManager.initializeBankController() - ServicesManager.load() returned null, trying getRegistrations()");
                 try {
-                    java.util.List<org.bukkit.plugin.RegisteredServiceProvider<?>> providers = 
-                        new java.util.ArrayList<>(plugin.getServer().getServicesManager().getRegistrations(bankControllerClass));
-                    plugin.debug("BankManager.initializeBankController() - getRegistrations() returned {} providers", providers != null ? providers.size() : 0);
+                    @SuppressWarnings("unchecked")
+                    java.util.Collection<org.bukkit.plugin.RegisteredServiceProvider<?>> providers = 
+                        (java.util.Collection<org.bukkit.plugin.RegisteredServiceProvider<?>>) 
+                        (java.util.Collection<?>) plugin.getServer().getServicesManager().getRegistrations(bankControllerClass);
+                    int providerCount = providers != null ? providers.size() : 0;
+                    plugin.debug("BankManager.initializeBankController() - getRegistrations() returned {} providers", providerCount);
                     
-                    if (providers != null && !providers.isEmpty()) {
-                        org.bukkit.plugin.RegisteredServiceProvider<?> provider = providers.get(0);
+                    if (providerCount > 0) {
+                        // Log all available providers for debugging
+                        plugin.debug("BankManager.initializeBankController() - Available BankController providers:");
+                        for (org.bukkit.plugin.RegisteredServiceProvider<?> p : providers) {
+                            plugin.debug("  - Plugin: {}, Priority: {}", p.getPlugin().getName(), p.getPriority());
+                        }
+                        
+                        // If we want to use our own controller, check if it's in the list
+                        if (configManager.isUseOwnController()) {
+                            CotrBankController ourController = plugin.getCotrBankController();
+                            for (org.bukkit.plugin.RegisteredServiceProvider<?> p : providers) {
+                                if (p.getProvider() == ourController) {
+                                    plugin.debug("BankManager.initializeBankController() - Found our own BankController in providers, using it");
+                                    bankController = ourController;
+                                    bankingEnabled = true;
+                                    plugin.getLogger().info("Using Coin of the Realm's built-in BankController");
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        // Get the highest priority provider (external controller)
+                        org.bukkit.plugin.RegisteredServiceProvider<?> provider = providers.iterator().next();
                         bankController = provider.getProvider();
-                        plugin.getLogger().info("Found BankController via provider: " + provider.getPlugin().getName());
+                        plugin.getLogger().info("Found BankController via provider: " + provider.getPlugin().getName() + " (priority: " + provider.getPriority() + ")");
                         plugin.debug("BankManager.initializeBankController() - Got BankController from provider: plugin={}, priority={}", 
                             provider.getPlugin().getName(), provider.getPriority());
                     } else {
                         plugin.debug("BankManager.initializeBankController() - No providers found in registration list");
+                        plugin.debug("BankManager.initializeBankController() - This means no plugin has registered a BankController with ServiceIO");
                     }
                 } catch (Exception e2) {
-                    plugin.getLogger().warning("Failed to get BankController provider: " + e2.getMessage());
+                    plugin.getLogger().warning("Failed to query BankController providers: " + e2.getMessage());
                     plugin.debug("BankManager.initializeBankController() - Exception getting provider: {} - {}", e2.getClass().getSimpleName(), e2.getMessage());
                 }
             }
             
             if (bankController == null) {
                 bankingEnabled = false;
-                plugin.getLogger().warning("ServiceIO BankController service not registered. Banking features disabled.");
-                plugin.getLogger().warning("Ensure ServiceIO is properly configured and has registered the BankController service.");
+                // ServiceIO is present but no BankController is registered
+                plugin.getLogger().info("ServiceIO plugin is installed and enabled, but no BankController service is registered.");
+                plugin.getLogger().info("Banking features are currently disabled.");
+                plugin.getLogger().info("");
+                plugin.getLogger().info("To enable banking, you have two options:");
+                plugin.getLogger().info("1. Install a plugin that provides a BankController implementation (e.g., an economy plugin with banking support)");
+                plugin.getLogger().info("2. Enable Coin of the Realm's built-in BankController in config.yml (banking.use-own-controller: true)");
+                plugin.getLogger().info("");
+                plugin.getLogger().info("Note: ServiceIO acts as a service registry. Plugins register their BankController");
+                plugin.getLogger().info("implementations with ServiceIO, allowing other plugins to discover and use them.");
                 plugin.debug("BankManager.initializeBankController() - BankController is null after all attempts, banking disabled");
             } else {
                 bankingEnabled = true;
-                plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
+                org.bukkit.plugin.Plugin providerPlugin = null;
+                try {
+                    // Try to identify which plugin provided the BankController
+                    @SuppressWarnings("unchecked")
+                    java.util.Collection<org.bukkit.plugin.RegisteredServiceProvider<?>> providers = 
+                        (java.util.Collection<org.bukkit.plugin.RegisteredServiceProvider<?>>) 
+                        (java.util.Collection<?>) plugin.getServer().getServicesManager().getRegistrations(bankControllerClass);
+                    if (providers != null && !providers.isEmpty()) {
+                        providerPlugin = providers.iterator().next().getPlugin();
+                    }
+                } catch (Exception e) {
+                    plugin.debug("BankManager.initializeBankController() - Could not identify BankController provider: {}", e.getMessage());
+                }
+                
+                if (providerPlugin != null) {
+                    plugin.getLogger().info("BankController loaded successfully from plugin: " + providerPlugin.getName() + " (v" + providerPlugin.getDescription().getVersion() + ")");
+                    plugin.getLogger().info("Banking features enabled.");
+                } else {
+                    plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
+                }
                 plugin.debug("BankManager.initializeBankController() - BankController initialized successfully, banking enabled");
             }
         } catch (ClassNotFoundException e) {

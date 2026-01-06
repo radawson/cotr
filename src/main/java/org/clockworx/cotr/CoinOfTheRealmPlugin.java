@@ -10,6 +10,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.clockworx.cotr.bank.AccountMembershipManager;
 import org.clockworx.cotr.bank.BankManager;
+import org.clockworx.cotr.bank.impl.CotrBankController;
+import org.clockworx.cotr.bank.storage.BankStorage;
+import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
 import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.datapack.DataPackManager;
@@ -53,6 +56,9 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     private AccountMembershipManager membershipManager;
     private BankManager bankManager;
     private DataPackManager dataPackManager;
+    private BankStorage bankStorage;
+    private DatabaseBankStorage databaseBankStorage; // Specific type for AccountMembershipManager
+    private CotrBankController cotrBankController;
     
     @Override
     public void onEnable() {
@@ -66,9 +72,21 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
             return;
         }
         
-        // Initialize account membership manager
-        membershipManager = new AccountMembershipManager(this);
-        membershipManager.load();
+        // Initialize bank storage first (needed for AccountMembershipManager)
+        if (configManager.isBankingEnabled() && configManager.isUseOwnController()) {
+            initializeBankStorage();
+        }
+        
+        // Initialize account membership manager (with storage if available)
+        membershipManager = new AccountMembershipManager(this, databaseBankStorage);
+        if (databaseBankStorage != null) {
+            membershipManager.load();
+        }
+        
+        // Initialize bank controller if banking is enabled (storage must be initialized first)
+        if (configManager.isBankingEnabled() && configManager.isUseOwnController() && databaseBankStorage != null) {
+            initializeOwnBankController();
+        }
         
         // Initialize bank manager (requires ServiceIO if banking is enabled)
         bankManager = new BankManager(this, membershipManager, configManager);
@@ -92,6 +110,122 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         getLogger().info("Coin item: " + configManager.getCoinConfig().getItemKey());
         if (bankManager.isBankingEnabled()) {
             getLogger().info("Banking features enabled with " + bankManager.getAccountCount() + " accounts");
+        }
+    }
+    
+    /**
+     * Initializes bank storage.
+     */
+    private void initializeBankStorage() {
+        debug("CoinOfTheRealmPlugin.initializeBankStorage() - Starting storage initialization");
+        
+        String storageType = configManager.getBankStorageType();
+        if (!"database".equals(storageType)) {
+            getLogger().warning("Bank storage type '" + storageType + "' is not yet supported. Using database.");
+        }
+        
+        String databaseType = configManager.getDatabaseType();
+        String connectionString = configManager.getDatabaseConnectionString();
+        String tablePrefix = configManager.getDatabasePrefix();
+        
+        debug("CoinOfTheRealmPlugin.initializeBankStorage() - Database type: {}, connection: {}, prefix: '{}'", 
+            databaseType, connectionString, tablePrefix);
+        
+        databaseBankStorage = new DatabaseBankStorage(this, databaseType, connectionString, tablePrefix);
+        bankStorage = databaseBankStorage; // Also store as interface
+        
+        // Initialize storage synchronously (wait for it to complete)
+        try {
+            databaseBankStorage.initialize().join();
+            debug("CoinOfTheRealmPlugin.initializeBankStorage() - Storage initialized");
+        } catch (Exception e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Failed to initialize bank storage", e);
+            databaseBankStorage = null;
+            bankStorage = null;
+        }
+    }
+    
+    /**
+     * Initializes our own BankController and registers it with ServiceIO.
+     */
+    private void initializeOwnBankController() {
+        debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Starting initialization");
+        
+        // Check if ServiceIO is available
+        org.bukkit.plugin.Plugin serviceIOPlugin = getServer().getPluginManager().getPlugin("ServiceIO");
+        if (serviceIOPlugin == null || !serviceIOPlugin.isEnabled()) {
+            getLogger().warning("Cannot register BankController: ServiceIO plugin not found or not enabled");
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - ServiceIO not available, skipping registration");
+            return;
+        }
+        
+        if (databaseBankStorage == null) {
+            getLogger().warning("Cannot register BankController: Bank storage not initialized");
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Storage not available, skipping registration");
+            return;
+        }
+        
+        debug("CoinOfTheRealmPlugin.initializeOwnBankController() - ServiceIO found, creating BankController");
+        
+        // Create BankController instance (storage is already initialized)
+        cotrBankController = new CotrBankController(this, databaseBankStorage);
+        
+        // Register with ServiceIO (synchronously)
+        try {
+            Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
+            
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registering BankController");
+            
+            // Register with ServiceIO using reflection to avoid type issues
+            org.bukkit.plugin.ServicesManager servicesManager = getServer().getServicesManager();
+            
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registering BankController with ServiceIO");
+            
+            // Use reflection to call register method
+            try {
+                // Try the 3-parameter version first (Class, Object, Plugin)
+                java.lang.reflect.Method registerMethod = servicesManager.getClass().getMethod(
+                    "register",
+                    Class.class,
+                    Object.class,
+                    org.bukkit.plugin.Plugin.class
+                );
+                registerMethod.invoke(servicesManager, bankControllerClass, cotrBankController, this);
+                debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 3-parameter method");
+            } catch (NoSuchMethodException e) {
+                // Try 4-parameter version with priority (if it exists)
+                try {
+                    // Try to find PluginPriority enum
+                    Class<?> priorityClass = Class.forName("org.bukkit.plugin.PluginPriority");
+                    java.lang.reflect.Method registerMethod = servicesManager.getClass().getMethod(
+                        "register",
+                        Class.class,
+                        Object.class,
+                        org.bukkit.plugin.Plugin.class,
+                        priorityClass
+                    );
+                    // Get NORMAL priority
+                    Object[] priorities = priorityClass.getEnumConstants();
+                    Object normalPriority = priorities[2]; // NORMAL is typically index 2
+                    registerMethod.invoke(servicesManager, bankControllerClass, cotrBankController, this, normalPriority);
+                    debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 4-parameter method with priority");
+                } catch (Exception e2) {
+                    throw new RuntimeException("Failed to register BankController: No suitable register method found", e2);
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to register BankController: " + e.getMessage(), e);
+            }
+            
+            getLogger().info("Registered Coin of the Realm BankController with ServiceIO");
+            getLogger().info("Other plugins can now discover and use CotR banking via ServiceIO");
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registration successful");
+            
+        } catch (ClassNotFoundException e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Failed to register BankController: BankController class not found", e);
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - ClassNotFoundException: {}", e.getMessage());
+        } catch (Exception e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Failed to register BankController", e);
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Exception: {} - {}", e.getClass().getSimpleName(), e.getMessage());
         }
     }
     
@@ -169,6 +303,12 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
             membershipManager.save();
         }
         
+        // Shutdown bank storage
+        if (databaseBankStorage != null) {
+            databaseBankStorage.shutdown().join(); // Wait for shutdown to complete
+            debug("CoinOfTheRealmPlugin.onDisable() - Bank storage shut down");
+        }
+        
         getLogger().info("Coin of the Realm plugin has been disabled!");
         instance = null;
     }
@@ -220,6 +360,36 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     @Nullable
     public AccountMembershipManager getMembershipManager() {
         return membershipManager;
+    }
+    
+    /**
+     * Gets the BankStorage instance.
+     * 
+     * @return The BankStorage, or null if not initialized
+     */
+    @Nullable
+    public BankStorage getBankStorage() {
+        return bankStorage;
+    }
+    
+    /**
+     * Gets the DatabaseBankStorage instance.
+     * 
+     * @return The DatabaseBankStorage, or null if not initialized
+     */
+    @Nullable
+    public DatabaseBankStorage getDatabaseBankStorage() {
+        return databaseBankStorage;
+    }
+    
+    /**
+     * Gets the CotrBankController instance.
+     * 
+     * @return The CotrBankController, or null if not initialized
+     */
+    @Nullable
+    public CotrBankController getCotrBankController() {
+        return cotrBankController;
     }
     
     /**

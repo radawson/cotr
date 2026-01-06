@@ -104,6 +104,7 @@ public class BankReflectionHelper {
     
     /**
      * Calls deposit on Bank.
+     * Handles both deposit(BigDecimal) and deposit(Number) method signatures.
      */
     @Nullable
     public static BigDecimal deposit(@NotNull Object bank, @NotNull BigDecimal amount) {
@@ -111,7 +112,20 @@ public class BankReflectionHelper {
         plugin.debug("BankReflectionHelper.deposit() - bank={}, amount={}", bank.getClass().getSimpleName(), amount);
         
         try {
-            Method method = bank.getClass().getMethod("deposit", BigDecimal.class);
+            // Try BigDecimal parameter first (for external controllers)
+            Method method = null;
+            try {
+                method = bank.getClass().getMethod("deposit", BigDecimal.class);
+            } catch (NoSuchMethodException e) {
+                // Try Number parameter (for our CotrBank)
+                try {
+                    method = bank.getClass().getMethod("deposit", Number.class);
+                } catch (NoSuchMethodException e2) {
+                    plugin.debug("BankReflectionHelper.deposit() - No deposit method found");
+                    return null;
+                }
+            }
+            
             plugin.debug("BankReflectionHelper.deposit() - Method found: {}", method.getName());
             
             BigDecimal result = (BigDecimal) method.invoke(bank, amount);
@@ -126,6 +140,7 @@ public class BankReflectionHelper {
     
     /**
      * Calls withdraw on Bank.
+     * Handles both withdraw(BigDecimal) and withdraw(Number) method signatures.
      */
     @Nullable
     public static BigDecimal withdraw(@NotNull Object bank, @NotNull BigDecimal amount) {
@@ -133,7 +148,20 @@ public class BankReflectionHelper {
         plugin.debug("BankReflectionHelper.withdraw() - bank={}, amount={}", bank.getClass().getSimpleName(), amount);
         
         try {
-            Method method = bank.getClass().getMethod("withdraw", BigDecimal.class);
+            // Try BigDecimal parameter first (for external controllers)
+            Method method = null;
+            try {
+                method = bank.getClass().getMethod("withdraw", BigDecimal.class);
+            } catch (NoSuchMethodException e) {
+                // Try Number parameter (for our CotrBank)
+                try {
+                    method = bank.getClass().getMethod("withdraw", Number.class);
+                } catch (NoSuchMethodException e2) {
+                    plugin.debug("BankReflectionHelper.withdraw() - No withdraw method found");
+                    return null;
+                }
+            }
+            
             plugin.debug("BankReflectionHelper.withdraw() - Method found: {}", method.getName());
             
             BigDecimal result = (BigDecimal) method.invoke(bank, amount);

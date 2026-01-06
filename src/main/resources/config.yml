@@ -27,4 +27,27 @@ resource-pack:
 banking:
   enabled: true
   default-account-pattern: "{player-uuid}-main"
-  membership-storage: "yaml"
+  
+  # Use our own BankController or external one
+  use-own-controller: true
+  # ServiceIO registration priority (LOWEST, LOW, NORMAL, HIGH, HIGHEST)
+  service-priority: "NORMAL"
+  
+  storage:
+    # Storage type: "database" or "yaml" (yaml not yet implemented for banks)
+    type: "database"
+    database:
+      # Database type: "sqlite" or "mysql"
+      type: "sqlite"
+      # Table prefix for shared databases (optional, default: empty)
+      # Useful when multiple plugins share the same database
+      # Example: "cotr_" would create tables like "cotr_banks", "cotr_schema_version"
+      prefix: ""
+      # SQLite options
+      file: "banks.db"
+      # MySQL options (if type is mysql)
+      # host: "localhost"
+      # port: 3306
+      # database: "cotr"
+      # username: "cotr"
+      # password: "password"
