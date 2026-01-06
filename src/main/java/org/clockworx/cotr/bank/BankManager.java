@@ -66,23 +66,56 @@ public class BankManager {
             return;
         }
         
+        // First, check if ServiceIO plugin exists
+        org.bukkit.plugin.Plugin serviceIOPlugin = plugin.getServer().getPluginManager().getPlugin("ServiceIO");
+        if (serviceIOPlugin == null || !serviceIOPlugin.isEnabled()) {
+            bankingEnabled = false;
+            plugin.getLogger().warning("ServiceIO plugin not found or not enabled. Banking features disabled.");
+            plugin.getLogger().warning("Install and enable ServiceIO plugin to enable banking features.");
+            return;
+        }
+        
+        plugin.getLogger().info("ServiceIO plugin detected. Attempting to load BankController...");
+        
         try {
-            // Use reflection to load BankController class without importing it
+            // Try to load the BankController class
             Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
+            plugin.getLogger().info("BankController class found: " + bankControllerClass.getName());
+            
+            // Try to get the service from ServicesManager
             bankController = plugin.getServer().getServicesManager().load(bankControllerClass);
             
             if (bankController == null) {
+                // Try alternative: get provider directly
+                try {
+                    java.util.List<org.bukkit.plugin.RegisteredServiceProvider<?>> providers = 
+                        new java.util.ArrayList<>(plugin.getServer().getServicesManager().getRegistrations(bankControllerClass));
+                    if (providers != null && !providers.isEmpty()) {
+                        org.bukkit.plugin.RegisteredServiceProvider<?> provider = providers.get(0);
+                        bankController = provider.getProvider();
+                        plugin.getLogger().info("Found BankController via provider: " + provider.getPlugin().getName());
+                    }
+                } catch (Exception e2) {
+                    plugin.getLogger().warning("Failed to get BankController provider: " + e2.getMessage());
+                }
+            }
+            
+            if (bankController == null) {
                 bankingEnabled = false;
-                plugin.getLogger().warning("ServiceIO BankController not found. Banking features disabled.");
-                plugin.getLogger().warning("Install ServiceIO plugin to enable banking features.");
+                plugin.getLogger().warning("ServiceIO BankController service not registered. Banking features disabled.");
+                plugin.getLogger().warning("Ensure ServiceIO is properly configured and has registered the BankController service.");
             } else {
                 bankingEnabled = true;
                 plugin.getLogger().info("BankController loaded successfully. Banking features enabled.");
             }
         } catch (ClassNotFoundException e) {
             bankingEnabled = false;
-            plugin.getLogger().warning("ServiceIO not found. Banking features disabled.");
-            plugin.getLogger().warning("Install ServiceIO plugin to enable banking features.");
+            plugin.getLogger().warning("ServiceIO BankController class not found: " + e.getMessage());
+            plugin.getLogger().warning("This may indicate a version mismatch. Ensure ServiceIO version 2.3.1+ is installed.");
+        } catch (Exception e) {
+            bankingEnabled = false;
+            plugin.getLogger().warning("Error loading ServiceIO BankController: " + e.getMessage());
+            plugin.getLogger().log(java.util.logging.Level.WARNING, "Stack trace", e);
         }
     }
     

@@ -36,6 +36,9 @@ public class ConfigManager {
     private boolean bankingEnabled;
     private String defaultAccountPattern;
     private String membershipStorage;
+    private String resourcePackUrl;
+    private String resourcePackHash;
+    private boolean resourcePackPrompt;
     
     /**
      * Creates a new ConfigManager for the specified plugin.
@@ -73,6 +76,9 @@ public class ConfigManager {
         
         // Load banking configuration
         loadBankingConfig();
+        
+        // Load resource pack configuration
+        loadResourcePackConfig();
         
         plugin.getLogger().info("Configuration loaded successfully");
         return true;
@@ -190,6 +196,24 @@ public class ConfigManager {
     }
     
     /**
+     * Loads the resource pack configuration from the config file.
+     */
+    private void loadResourcePackConfig() {
+        resourcePackUrl = config.getString("resource-pack.url", "");
+        resourcePackHash = config.getString("resource-pack.hash", "");
+        resourcePackPrompt = config.getBoolean("resource-pack.prompt", true);
+        
+        if (resourcePackUrl != null && !resourcePackUrl.isEmpty()) {
+            plugin.getLogger().info("Resource pack URL configured: " + resourcePackUrl);
+            if (resourcePackHash != null && !resourcePackHash.isEmpty()) {
+                plugin.getLogger().info("Resource pack hash configured (SHA-1 verification enabled)");
+            }
+        } else {
+            plugin.getLogger().info("Resource pack URL not configured - automatic application disabled");
+        }
+    }
+    
+    /**
      * Gets the coin configuration.
      * 
      * @return The CoinConfig instance
@@ -226,6 +250,35 @@ public class ConfigManager {
     @NotNull
     public String getMembershipStorage() {
         return membershipStorage;
+    }
+    
+    /**
+     * Gets the resource pack URL.
+     * 
+     * @return The resource pack URL, or empty string if not configured
+     */
+    @NotNull
+    public String getResourcePackUrl() {
+        return resourcePackUrl != null ? resourcePackUrl : "";
+    }
+    
+    /**
+     * Gets the resource pack SHA-1 hash.
+     * 
+     * @return The resource pack hash, or empty string if not configured
+     */
+    @NotNull
+    public String getResourcePackHash() {
+        return resourcePackHash != null ? resourcePackHash : "";
+    }
+    
+    /**
+     * Checks if the resource pack should prompt players.
+     * 
+     * @return true if players should be prompted, false for automatic application
+     */
+    public boolean isResourcePackPrompt() {
+        return resourcePackPrompt;
     }
     
     /**

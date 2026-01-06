@@ -7,9 +7,11 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.inventory.ItemStack;
+import org.clockworx.cotr.CoinOfTheRealmPlugin;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.item.CoinItem;
 
@@ -124,5 +126,79 @@ public class CoinListener implements Listener {
         
         // Cancel the event to prevent other handlers
         event.setCancelled(true);
+    }
+    
+    /**
+     * Handles when a player joins the server.
+     * Automatically applies the resource pack if configured.
+     * 
+     * @param event The PlayerJoinEvent
+     */
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        
+        if (plugin == null) {
+            return;
+        }
+        
+        String resourcePackUrl = plugin.getConfigManager().getResourcePackUrl();
+        
+        // Only apply resource pack if URL is configured
+        if (resourcePackUrl == null || resourcePackUrl.isEmpty()) {
+            return;
+        }
+        
+        // Get resource pack hash if configured
+        String resourcePackHash = plugin.getConfigManager().getResourcePackHash();
+        boolean prompt = plugin.getConfigManager().isResourcePackPrompt();
+        
+        // Apply resource pack with a slight delay to ensure player is fully connected
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            try {
+                if (resourcePackHash != null && !resourcePackHash.isEmpty()) {
+                    // Apply with hash verification (convert hex string to byte array)
+                    byte[] hashBytes = hexStringToByteArray(resourcePackHash);
+                    if (hashBytes != null && hashBytes.length == 20) { // SHA-1 is 20 bytes
+                        player.setResourcePack(resourcePackUrl, hashBytes);
+                    } else {
+                        // Invalid hash, apply without verification
+                        plugin.getLogger().warning("Invalid resource pack hash format, applying without verification");
+                        player.setResourcePack(resourcePackUrl);
+                    }
+                } else {
+                    // Apply without hash verification
+                    player.setResourcePack(resourcePackUrl);
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("Failed to apply resource pack to " + player.getName() + ": " + e.getMessage());
+            }
+        }, 20L); // 1 second delay
+    }
+    
+    /**
+     * Converts a hexadecimal string to a byte array.
+     * Used for converting SHA-1 hash strings to byte arrays for resource pack verification.
+     * 
+     * @param hexString The hexadecimal string (e.g., "a1b2c3...")
+     * @return The byte array, or null if the string is invalid
+     */
+    private byte[] hexStringToByteArray(String hexString) {
+        if (hexString == null || hexString.length() % 2 != 0) {
+            return null;
+        }
+        
+        try {
+            int len = hexString.length();
+            byte[] data = new byte[len / 2];
+            for (int i = 0; i < len; i += 2) {
+                data[i / 2] = (byte) ((Character.digit(hexString.charAt(i), 16) << 4)
+                        + Character.digit(hexString.charAt(i + 1), 16));
+            }
+            return data;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
