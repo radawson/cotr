@@ -22,12 +22,16 @@ import java.util.List;
 public class CoinConfig {
 
     private final String itemKey;
+    private final String fallbackItemKey;
     private final String displayName;
     private final List<String> lore;
     private final int customModelData;
     private final String modelNamespace;
     private final String modelKey;
+    private final int maxStackSize;
+    private final String rarity;
     private Material material;
+    private Material fallbackMaterial;
     private NamespacedKey namespacedKey;
 
     /**
@@ -35,23 +39,31 @@ public class CoinConfig {
      * 
      * @param itemKey         The namespaced key string (e.g.,
      *                        "minecraft:gold_nugget" or "custom:my_coin")
+     * @param fallbackItemKey The fallback item key if custom item fails
      * @param displayName     The display name for the coin
      * @param lore            The lore lines for the coin
      * @param customModelData The CustomModelData value for resource pack texture
      *                        (deprecated, use model instead)
      * @param modelNamespace  The namespace for the item model (e.g., "cotr")
      * @param modelKey        The key for the item model (e.g., "coin")
+     * @param maxStackSize    The maximum stack size (1-64)
+     * @param rarity          The item rarity (common, uncommon, rare, epic)
      */
-    public CoinConfig(@NotNull String itemKey, @NotNull String displayName,
-            @NotNull List<String> lore, int customModelData,
-            @Nullable String modelNamespace, @Nullable String modelKey) {
+    public CoinConfig(@NotNull String itemKey, @NotNull String fallbackItemKey,
+            @NotNull String displayName, @NotNull List<String> lore, 
+            int customModelData, @Nullable String modelNamespace, 
+            @Nullable String modelKey, int maxStackSize, @NotNull String rarity) {
         this.itemKey = itemKey;
+        this.fallbackItemKey = fallbackItemKey;
         this.displayName = displayName;
         this.lore = lore;
         this.customModelData = customModelData;
         this.modelNamespace = modelNamespace;
         this.modelKey = modelKey;
+        this.maxStackSize = maxStackSize;
+        this.rarity = rarity;
         parseItemKey();
+        parseFallbackItemKey();
     }
 
     /**
@@ -86,6 +98,28 @@ public class CoinConfig {
                 // Invalid format, will use fallback
                 this.material = Material.GOLD_NUGGET;
             }
+        }
+    }
+    
+    /**
+     * Parses the fallback item key string into a Material.
+     */
+    private void parseFallbackItemKey() {
+        try {
+            String materialName = fallbackItemKey;
+            if (fallbackItemKey.contains(":")) {
+                String[] parts = fallbackItemKey.split(":", 2);
+                if ("minecraft".equals(parts[0])) {
+                    materialName = parts[1].toUpperCase();
+                } else {
+                    // Non-minecraft namespace, try as Material name anyway
+                    materialName = parts[1].toUpperCase();
+                }
+            }
+            this.fallbackMaterial = Material.valueOf(materialName);
+        } catch (IllegalArgumentException e) {
+            // Invalid fallback, use gold nugget
+            this.fallbackMaterial = Material.GOLD_NUGGET;
         }
     }
 
@@ -190,6 +224,45 @@ public class CoinConfig {
      */
     public boolean isVanillaItem() {
         return material != null;
+    }
+    
+    /**
+     * Gets the fallback item key.
+     * 
+     * @return The fallback item key
+     */
+    @NotNull
+    public String getFallbackItemKey() {
+        return fallbackItemKey;
+    }
+    
+    /**
+     * Gets the fallback Material.
+     * 
+     * @return The fallback Material, or null if not set
+     */
+    @Nullable
+    public Material getFallbackMaterial() {
+        return fallbackMaterial;
+    }
+    
+    /**
+     * Gets the maximum stack size.
+     * 
+     * @return The maximum stack size (1-64)
+     */
+    public int getMaxStackSize() {
+        return maxStackSize;
+    }
+    
+    /**
+     * Gets the item rarity.
+     * 
+     * @return The rarity (common, uncommon, rare, epic)
+     */
+    @NotNull
+    public String getRarity() {
+        return rarity;
     }
 
     /**

@@ -12,6 +12,7 @@ import org.clockworx.cotr.bank.AccountMembershipManager;
 import org.clockworx.cotr.bank.BankManager;
 import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.config.ConfigManager;
+import org.clockworx.cotr.datapack.DataPackManager;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.listener.CoinListener;
 import org.jetbrains.annotations.NotNull;
@@ -51,6 +52,7 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     private ConfigManager configManager;
     private AccountMembershipManager membershipManager;
     private BankManager bankManager;
+    private DataPackManager dataPackManager;
     
     @Override
     public void onEnable() {
@@ -70,6 +72,10 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         
         // Initialize bank manager (requires ServiceIO if banking is enabled)
         bankManager = new BankManager(this, membershipManager, configManager);
+        
+        // Initialize data pack manager and install data pack for custom items
+        dataPackManager = new DataPackManager(this);
+        installDataPack();
         
         // Register event listeners
         getServer().getPluginManager().registerEvents(new CoinListener(), this);
@@ -214,6 +220,35 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     @Nullable
     public AccountMembershipManager getMembershipManager() {
         return membershipManager;
+    }
+    
+    /**
+     * Installs the data pack for custom item registration.
+     * Only installs if the configured item is a custom item (not a vanilla Material).
+     */
+    private void installDataPack() {
+        if (dataPackManager == null || configManager == null) {
+            return;
+        }
+        
+        org.clockworx.cotr.config.CoinConfig coinConfig = configManager.getCoinConfig();
+        
+        // Only install data pack if using a custom item (has NamespacedKey but no Material)
+        if (coinConfig.getNamespacedKey() != null && coinConfig.getMaterial() == null) {
+            getLogger().info("Installing data pack for custom item: " + coinConfig.getItemKey());
+            boolean success = dataPackManager.installDataPack(
+                coinConfig,
+                coinConfig.getMaxStackSize(),
+                coinConfig.getRarity()
+            );
+            
+            if (!success) {
+                getLogger().warning("Data pack installation failed. Custom item may not work with /give commands.");
+                getLogger().info("You may need to manually install the data pack or restart the server.");
+            }
+        } else {
+            getLogger().info("Using vanilla item: " + coinConfig.getItemKey() + " (data pack not needed)");
+        }
     }
     
     /**

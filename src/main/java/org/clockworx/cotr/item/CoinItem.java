@@ -55,16 +55,37 @@ public class CoinItem {
 
         CoinConfig coinConfig = plugin.getConfigManager().getCoinConfig();
         Material material = coinConfig.getMaterial();
-        plugin.debug("CoinItem.createCoin() - Coin material from config: {}", material);
+        NamespacedKey itemKey = coinConfig.getNamespacedKey();
+        plugin.debug("CoinItem.createCoin() - Coin config: material={}, namespacedKey={}", material, itemKey);
 
-        if (material == null) {
-            // Fallback to gold nugget if material is not available (custom items)
-            material = Material.GOLD_NUGGET;
-            plugin.debug("CoinItem.createCoin() - Material was null, using fallback: {}", material);
+        ItemStack coin;
+        
+        // Check if this is a custom item (has NamespacedKey but no Material)
+        if (itemKey != null && material == null) {
+            // Custom items registered via data pack need to be accessed differently
+            // For now, we'll use the fallback material and rely on NBT/data pack registration
+            // The item will be identified by NBT, and the data pack will handle /give commands
+            Material fallback = coinConfig.getFallbackMaterial();
+            if (fallback == null) {
+                fallback = Material.GOLD_NUGGET;
+            }
+            plugin.debug("CoinItem.createCoin() - Custom item detected, using fallback material: {} (item will be identified by NBT)", fallback);
+            coin = new ItemStack(fallback, amount);
+            // Note: The custom item is registered via data pack for /give commands
+            // This ItemStack uses the fallback material but will be identified as a coin via NBT
+        } else if (material != null) {
+            // Vanilla item
+            coin = new ItemStack(material, amount);
+            plugin.debug("CoinItem.createCoin() - Created vanilla item: {}", material);
+        } else {
+            // Both are null, use fallback
+            Material fallback = coinConfig.getFallbackMaterial();
+            if (fallback == null) {
+                fallback = Material.GOLD_NUGGET;
+            }
+            plugin.debug("CoinItem.createCoin() - Both material and namespacedKey null, using fallback: {}", fallback);
+            coin = new ItemStack(fallback, amount);
         }
-
-        // Create ItemStack based on configured material
-        ItemStack coin = new ItemStack(material, amount);
         ItemMeta meta = coin.getItemMeta();
 
         if (meta == null) {
@@ -145,18 +166,24 @@ public class CoinItem {
 
         CoinConfig coinConfig = plugin.getConfigManager().getCoinConfig();
 
-        // Check if material matches configured coin material
-        Material itemMaterial = item.getType();
+        // For custom items (no Material), we rely solely on NBT
+        // For vanilla items, we can also check material as an optimization
         Material coinMaterial = coinConfig.getMaterial();
-        plugin.debug("CoinItem.isCoin() - Checking item: material={}, configuredMaterial={}", itemMaterial, coinMaterial);
-
-        if (coinMaterial != null && itemMaterial != coinMaterial) {
-            plugin.debug("CoinItem.isCoin() - Material mismatch, returning false");
-            return false;
+        if (coinMaterial != null) {
+            // Vanilla item - check material match
+            Material itemMaterial = item.getType();
+            plugin.debug("CoinItem.isCoin() - Checking vanilla item: material={}, configuredMaterial={}", itemMaterial, coinMaterial);
+            
+            if (itemMaterial != coinMaterial) {
+                plugin.debug("CoinItem.isCoin() - Material mismatch, returning false");
+                return false;
+            }
+        } else {
+            // Custom item - material check not applicable
+            plugin.debug("CoinItem.isCoin() - Checking custom item (NBT only)");
         }
 
-        // For custom items (no Material), we rely solely on NBT
-        // Check for the coin NBT identifier
+        // Check for the coin NBT identifier (required for both vanilla and custom items)
         ItemMeta meta = item.getItemMeta();
         if (meta == null) {
             plugin.debug("CoinItem.isCoin() - ItemMeta is null, returning false");

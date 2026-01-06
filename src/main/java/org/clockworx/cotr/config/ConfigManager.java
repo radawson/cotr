@@ -120,10 +120,26 @@ public class ConfigManager {
      * Validates the configuration and provides sensible defaults if invalid.
      */
     private void loadCoinConfig() {
-        String itemKey = config.getString("coin.item", "minecraft:gold_nugget");
+        String itemKey = config.getString("coin.item", "cotr:coin");
+        String fallbackItemKey = config.getString("coin.fallback-item", "minecraft:gold_nugget");
         String displayName = config.getString("coin.display-name", "Coin of the Realm");
         List<String> lore = config.getStringList("coin.lore");
         int customModelData = config.getInt("coin.custom-model-data", 1000);
+        int maxStackSize = config.getInt("coin.max-stack-size", 64);
+        String rarity = config.getString("coin.rarity", "common");
+        
+        // Validate max stack size
+        if (maxStackSize < 1 || maxStackSize > 64) {
+            plugin.getLogger().warning("Invalid max-stack-size: " + maxStackSize + ". Using default: 64");
+            maxStackSize = 64;
+        }
+        
+        // Validate rarity
+        if (!rarity.equals("common") && !rarity.equals("uncommon") && 
+            !rarity.equals("rare") && !rarity.equals("epic")) {
+            plugin.getLogger().warning("Invalid rarity: " + rarity + ". Using default: common");
+            rarity = "common";
+        }
         
         // Parse model field (e.g., "cotr:coin")
         String modelString = config.getString("coin.model", null);
@@ -144,15 +160,22 @@ public class ConfigManager {
             lore.add("used throughout the realm.");
         }
         
-        // Validate that the item is droppable (basic check)
+        // Validate that the item key is in valid format
         if (!isValidItemKey(itemKey)) {
-            plugin.getLogger().warning("Invalid coin item key: " + itemKey + ". Using default: minecraft:gold_nugget");
-            itemKey = "minecraft:gold_nugget";
+            plugin.getLogger().warning("Invalid coin item key: " + itemKey + ". Using default: cotr:coin");
+            itemKey = "cotr:coin";
         }
         
-        coinConfig = new CoinConfig(itemKey, displayName, lore, customModelData, modelNamespace, modelKey);
+        // Validate fallback item key
+        if (!isValidItemKey(fallbackItemKey)) {
+            plugin.getLogger().warning("Invalid fallback item key: " + fallbackItemKey + ". Using default: minecraft:gold_nugget");
+            fallbackItemKey = "minecraft:gold_nugget";
+        }
         
-        plugin.getLogger().info("Coin configuration loaded: " + itemKey);
+        coinConfig = new CoinConfig(itemKey, fallbackItemKey, displayName, lore, customModelData, 
+                                   modelNamespace, modelKey, maxStackSize, rarity);
+        
+        plugin.getLogger().info("Coin configuration loaded: " + itemKey + " (fallback: " + fallbackItemKey + ")");
     }
     
     /**
