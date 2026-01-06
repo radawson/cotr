@@ -32,7 +32,8 @@ public class ConfigManager {
     
     private final CoinOfTheRealmPlugin plugin;
     private FileConfiguration config;
-    private CoinConfig coinConfig;
+    private FileConfiguration coinConfig;
+    private CoinConfig coinConfigObject;
     private boolean debugEnabled;
     private boolean bankingEnabled;
     private String defaultAccountPattern;
@@ -75,7 +76,8 @@ public class ConfigManager {
         // Load debug setting first (needed for other config loading)
         loadDebugConfig();
         
-        // Load coin configuration
+        // Load coin configuration from coin.yml
+        loadCoinConfigFile();
         loadCoinConfig();
         
         // Load banking configuration
@@ -86,6 +88,41 @@ public class ConfigManager {
         
         plugin.getLogger().info("Configuration loaded successfully");
         return true;
+    }
+    
+    /**
+     * Loads the coin.yml configuration file.
+     * Creates a default coin.yml if it doesn't exist.
+     */
+    private void loadCoinConfigFile() {
+        File coinConfigFile = new File(plugin.getDataFolder(), "coin.yml");
+        
+        // If coin.yml doesn't exist, save default
+        if (!coinConfigFile.exists()) {
+            saveDefaultCoinConfig();
+        }
+        
+        // Load the coin config
+        coinConfig = YamlConfiguration.loadConfiguration(coinConfigFile);
+    }
+    
+    /**
+     * Saves the default coin.yml from resources to the data folder.
+     */
+    private void saveDefaultCoinConfig() {
+        File coinConfigFile = new File(plugin.getDataFolder(), "coin.yml");
+        
+        // Copy default coin config from resources
+        try (InputStream defaultCoinConfig = plugin.getResource("coin.yml")) {
+            if (defaultCoinConfig != null) {
+                Files.copy(defaultCoinConfig, coinConfigFile.toPath());
+                plugin.getLogger().info("Created default coin.yml");
+            } else {
+                plugin.getLogger().warning("Default coin.yml not found in resources!");
+            }
+        } catch (IOException e) {
+            plugin.getLogger().severe("Failed to save default coin.yml: " + e.getMessage());
+        }
     }
     
     /**
@@ -116,17 +153,22 @@ public class ConfigManager {
     }
     
     /**
-     * Loads the coin configuration from the config file.
+     * Loads the coin configuration from coin.yml.
      * Validates the configuration and provides sensible defaults if invalid.
      */
     private void loadCoinConfig() {
-        String itemKey = config.getString("coin.item", "cotr:coin");
-        String fallbackItemKey = config.getString("coin.fallback-item", "minecraft:gold_nugget");
-        String displayName = config.getString("coin.display-name", "Coin of the Realm");
-        List<String> lore = config.getStringList("coin.lore");
-        int customModelData = config.getInt("coin.custom-model-data", 1000);
-        int maxStackSize = config.getInt("coin.max-stack-size", 64);
-        String rarity = config.getString("coin.rarity", "common");
+        String itemKey = coinConfig.getString("item", "cotr:coin");
+        String fallbackItemKey = coinConfig.getString("fallback-item", "minecraft:gold_nugget");
+        String displayName = coinConfig.getString("display-name", "Coin of the Realm");
+        String description = coinConfig.getString("description", null);
+        List<String> lore = coinConfig.getStringList("lore");
+        int customModelData = 1000; // Deprecated, but kept for compatibility
+        int maxStackSize = coinConfig.getInt("max-stack-size", 64);
+        String rarity = coinConfig.getString("rarity", "common");
+        boolean enchantmentGlint = coinConfig.getBoolean("enchantment-glint", true);
+        int useDuration = coinConfig.getInt("use-duration", 0);
+        String useAnimation = coinConfig.getString("use-animation", "none");
+        boolean attributeModifiersEnabled = coinConfig.getBoolean("attribute-modifiers.enabled", false);
         
         // Validate max stack size
         if (maxStackSize < 1 || maxStackSize > 64) {
@@ -141,8 +183,17 @@ public class ConfigManager {
             rarity = "common";
         }
         
+        // Validate use animation
+        if (!useAnimation.equals("eat") && !useAnimation.equals("drink") && 
+            !useAnimation.equals("block") && !useAnimation.equals("bow") &&
+            !useAnimation.equals("crossbow") && !useAnimation.equals("spyglass") &&
+            !useAnimation.equals("none")) {
+            plugin.getLogger().warning("Invalid use-animation: " + useAnimation + ". Using default: none");
+            useAnimation = "none";
+        }
+        
         // Parse model field (e.g., "cotr:coin")
-        String modelString = config.getString("coin.model", null);
+        String modelString = coinConfig.getString("model", null);
         String modelNamespace = null;
         String modelKey = null;
         if (modelString != null && modelString.contains(":")) {
@@ -172,8 +223,33 @@ public class ConfigManager {
             fallbackItemKey = "minecraft:gold_nugget";
         }
         
-        coinConfig = new CoinConfig(itemKey, fallbackItemKey, displayName, lore, customModelData, 
-                                   modelNamespace, modelKey, maxStackSize, rarity);
+        // Load attribute modifiers
+        List<CoinConfig.AttributeModifier> attributeModifiers = new ArrayList<>();
+        if (attributeModifiersEnabled) {
+            List<?> modifiersList = coinConfig.getList("attribute-modifiers.modifiers");
+            if (modifiersList != null) {
+                for (Object modifierObj : modifiersList) {
+                    if (modifierObj instanceof java.util.Map) {
+                        @SuppressWarnings("unchecked")
+                        java.util.Map<String, Object> modifierMap = (java.util.Map<String, Object>) modifierObj;
+                        String attr = (String) modifierMap.get("attribute");
+                        Object amountObj = modifierMap.get("amount");
+                        double amount = amountObj instanceof Number ? ((Number) amountObj).doubleValue() : 0.0;
+                        String operation = (String) modifierMap.get("operation");
+                        String slot = (String) modifierMap.get("slot");
+                        
+                        if (attr != null && operation != null && slot != null) {
+                            attributeModifiers.add(new CoinConfig.AttributeModifier(attr, amount, operation, slot));
+                        }
+                    }
+                }
+            }
+        }
+        
+        coinConfigObject = new CoinConfig(itemKey, fallbackItemKey, displayName, description, lore, 
+                                         customModelData, modelNamespace, modelKey, maxStackSize, rarity,
+                                         enchantmentGlint, useDuration, useAnimation,
+                                         attributeModifiersEnabled, attributeModifiers);
         
         plugin.getLogger().info("Coin configuration loaded: " + itemKey + " (fallback: " + fallbackItemKey + ")");
     }
@@ -264,7 +340,7 @@ public class ConfigManager {
      */
     @NotNull
     public CoinConfig getCoinConfig() {
-        return coinConfig;
+        return coinConfigObject;
     }
     
     /**
@@ -327,10 +403,14 @@ public class ConfigManager {
     
     /**
      * Reloads the configuration from disk.
+     * Reloads both config.yml and coin.yml.
      * 
      * @return true if reload was successful
      */
     public boolean reload() {
+        // Reload coin config file
+        loadCoinConfigFile();
+        // Reload all configs
         return loadConfig();
     }
 }

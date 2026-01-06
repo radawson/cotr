@@ -1,35 +1,13 @@
 debug: false
-coin:
-  # Custom item ID (default: cotr:coin)
-  # Use this format to register a custom item via data pack
-  # Format: "namespace:item_name" (e.g., "cotr:coin")
-  # If you use a custom item, the plugin will automatically generate and install
-  # a data pack to register it. This allows /give commands to work.
-  item: "cotr:coin"
-  
-  # Fallback material if custom item not available
-  # Only used if custom item creation fails or if item is a vanilla material
-  # This provides a fallback appearance for players without the resource pack
-  fallback-item: "minecraft:gold_nugget"
-  
-  # Item model for resource pack (namespace:key format)
-  # This references assets/cotr/items/coin.json in the resource pack
-  # Format: "namespace:key" (e.g., "cotr:coin")
-  model: "cotr:coin"
-  
-  # Display name for the coin
-  display-name: "Coin of the Realm"
-  
-  # Lore lines for the coin
-  lore:
-    - "A valuable currency"
-    - "used throughout the realm."
-  
-  # Max stack size (1-64, default: 64)
-  max-stack-size: 64
-  
-  # Rarity: common, uncommon, rare, epic (default: uncommon)
-  rarity: "uncommon"
+
+# Coin configuration is now in coin.yml
+# See plugins/CoinOfTheRealm/coin.yml for coin item settings
+# The coin.yml file contains all coin-related configuration including:
+# - Item registration (custom item ID, fallback material, model)
+# - Display properties (name, description, lore)
+# - Visual effects (enchantment glint, rarity)
+# - Usage behavior (use duration, animation)
+# - Attribute modifiers (bonuses when held)
 
 resource-pack:
   # URL to the resource pack ZIP file

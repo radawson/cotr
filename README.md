@@ -2,6 +2,8 @@
 
 A flexible, easy-to-use currency system plugin for Minecraft servers that provides a configurable currency item that can be seamlessly integrated with any economy plugin.
 
+
+
 ## Goal
 
 **Coin of the Realm** aims to create an easy-to-use currency system that anyone could plug into any of the economy plugins (Vault, ServiceIO, etc.). The goal of this plugin is to create a configurable currency system that can be used as:

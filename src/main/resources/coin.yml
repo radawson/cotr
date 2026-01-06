@@ -1,0 +1,70 @@
+# Coin Item Configuration
+# This file controls the appearance and behavior of the currency item
+
+# Item Registration
+# Custom item ID (default: cotr:coin)
+# Use this format to register a custom item via data pack
+# Format: "namespace:item_name" (e.g., "cotr:coin")
+# If you use a custom item, the plugin will automatically generate and install
+# a data pack to register it. This allows /give commands to work.
+item: "cotr:coin"
+
+# Fallback material if custom item not available
+# Only used if custom item creation fails or if item is a vanilla material
+# This provides a fallback appearance for players without the resource pack
+fallback-item: "minecraft:gold_nugget"
+
+# Item model for resource pack (namespace:key format)
+# This references assets/cotr/items/coin.json in the resource pack
+# Format: "namespace:key" (e.g., "cotr:coin")
+model: "cotr:coin"
+
+# Display Properties
+# Display name for the coin
+display-name: "Coin of the Realm"
+
+# Additional description text (appears in tooltip, separate from lore)
+# This provides additional flavor text for the coin
+description: "Minted by the Royal Treasury"
+
+# Lore lines for the coin (appears when hovering over the item)
+lore:
+  - "A valuable currency"
+  - "used throughout the realm."
+
+# Visual Effects
+# Make coins glow/shine with enchantment glint effect
+# Options: true, false, "always", "never"
+# true/"always" = always show glint, false/"never" = never show glint
+enchantment-glint: true
+
+# Rarity: common, uncommon, rare, epic
+# Affects the color of the item name in tooltips
+rarity: "uncommon"
+
+# Stacking
+# Max stack size (1-64, default: 64)
+max-stack-size: 64
+
+# Usage Behavior (optional - for consumable coins)
+# Duration in ticks to "use" the coin (20 ticks = 1 second)
+# Set to 0 for instant use, or higher for consumable coins
+# If set above 0, players can right-click to "use" the coin
+use-duration: 0
+
+# Animation when using the coin
+# Options: eat, drink, block, bow, crossbow, spyglass, none
+# "eat" or "drink" work well for consumable currency
+use-animation: "none"
+
+# Attribute Modifiers (optional - bonuses when held)
+# Enable attribute modifiers for coins
+attribute-modifiers:
+  enabled: false
+  # List of modifiers to apply when coin is held
+  modifiers:
+    # Example modifier (commented out):
+    # - attribute: "minecraft:luck"
+    #   amount: 1.0
+    #   operation: "add_value"  # Options: add_value, add_multiplied_base, add_multiplied_total
+    #   slot: "mainhand"  # Options: mainhand, offhand, head, chest, legs, feet

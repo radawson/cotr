@@ -12,10 +12,14 @@ import org.jetbrains.annotations.NotNull;
  * 
  * The generated item definition includes:
  * - Display name
+ * - Description
  * - Lore
  * - Item model reference
  * - Max stack size
  * - Rarity
+ * - Enchantment glint
+ * - Use duration and animation
+ * - Attribute modifiers
  */
 public class ItemDefinitionGenerator {
     
@@ -51,6 +55,14 @@ public class ItemDefinitionGenerator {
         json.append("      \"text\": \"").append(escapeJson(coinConfig.getDisplayName())).append("\"\n");
         json.append("    }");
         
+        // Description component (if set)
+        if (coinConfig.getDescription() != null && !coinConfig.getDescription().isEmpty()) {
+            json.append(",\n");
+            json.append("    \"minecraft:description\": {\n");
+            json.append("      \"text\": \"").append(escapeJson(coinConfig.getDescription())).append("\"\n");
+            json.append("    }");
+        }
+        
         // Lore component
         if (!coinConfig.getLore().isEmpty()) {
             json.append(",\n");
@@ -84,6 +96,46 @@ public class ItemDefinitionGenerator {
         if (rarity != null && !rarity.isEmpty()) {
             json.append(",\n");
             json.append("    \"minecraft:rarity\": \"").append(escapeJson(rarity)).append("\"");
+        }
+        
+        // Enchantment glint component
+        if (coinConfig.isEnchantmentGlint()) {
+            json.append(",\n");
+            json.append("    \"minecraft:enchantment_glint_override\": true");
+        }
+        
+        // Use duration component (if set)
+        if (coinConfig.getUseDuration() > 0) {
+            json.append(",\n");
+            json.append("    \"minecraft:use_duration\": ").append(coinConfig.getUseDuration());
+        }
+        
+        // Use animation component (if set and not "none")
+        if (coinConfig.getUseAnimation() != null && !coinConfig.getUseAnimation().equals("none")) {
+            json.append(",\n");
+            json.append("    \"minecraft:use_animation\": \"").append(escapeJson(coinConfig.getUseAnimation())).append("\"");
+        }
+        
+        // Attribute modifiers component (if enabled)
+        if (coinConfig.isAttributeModifiersEnabled() && !coinConfig.getAttributeModifiers().isEmpty()) {
+            json.append(",\n");
+            json.append("    \"minecraft:attribute_modifiers\": {\n");
+            json.append("      \"modifiers\": [\n");
+            for (int i = 0; i < coinConfig.getAttributeModifiers().size(); i++) {
+                CoinConfig.AttributeModifier mod = coinConfig.getAttributeModifiers().get(i);
+                json.append("        {\n");
+                json.append("          \"type\": \"").append(escapeJson(mod.getAttribute())).append("\",\n");
+                json.append("          \"amount\": ").append(mod.getAmount()).append(",\n");
+                json.append("          \"operation\": \"").append(escapeJson(mod.getOperation())).append("\",\n");
+                json.append("          \"slot\": \"").append(escapeJson(mod.getSlot())).append("\"\n");
+                json.append("        }");
+                if (i < coinConfig.getAttributeModifiers().size() - 1) {
+                    json.append(",");
+                }
+                json.append("\n");
+            }
+            json.append("      ]\n");
+            json.append("    }");
         }
         
         json.append("\n");

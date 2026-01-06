@@ -24,15 +24,43 @@ public class CoinConfig {
     private final String itemKey;
     private final String fallbackItemKey;
     private final String displayName;
+    private final String description;
     private final List<String> lore;
     private final int customModelData;
     private final String modelNamespace;
     private final String modelKey;
     private final int maxStackSize;
     private final String rarity;
+    private final boolean enchantmentGlint;
+    private final int useDuration;
+    private final String useAnimation;
+    private final boolean attributeModifiersEnabled;
+    private final List<AttributeModifier> attributeModifiers;
     private Material material;
     private Material fallbackMaterial;
     private NamespacedKey namespacedKey;
+    
+    /**
+     * Inner class for attribute modifier configuration.
+     */
+    public static class AttributeModifier {
+        private final String attribute;
+        private final double amount;
+        private final String operation;
+        private final String slot;
+        
+        public AttributeModifier(String attribute, double amount, String operation, String slot) {
+            this.attribute = attribute;
+            this.amount = amount;
+            this.operation = operation;
+            this.slot = slot;
+        }
+        
+        public String getAttribute() { return attribute; }
+        public double getAmount() { return amount; }
+        public String getOperation() { return operation; }
+        public String getSlot() { return slot; }
+    }
 
     /**
      * Creates a new CoinConfig with the specified values.
@@ -41,6 +69,7 @@ public class CoinConfig {
      *                        "minecraft:gold_nugget" or "custom:my_coin")
      * @param fallbackItemKey The fallback item key if custom item fails
      * @param displayName     The display name for the coin
+     * @param description     Additional description text for the coin
      * @param lore            The lore lines for the coin
      * @param customModelData The CustomModelData value for resource pack texture
      *                        (deprecated, use model instead)
@@ -48,20 +77,33 @@ public class CoinConfig {
      * @param modelKey        The key for the item model (e.g., "coin")
      * @param maxStackSize    The maximum stack size (1-64)
      * @param rarity          The item rarity (common, uncommon, rare, epic)
+     * @param enchantmentGlint Whether to show enchantment glint
+     * @param useDuration     Duration in ticks to use the coin (0 = instant)
+     * @param useAnimation    Animation when using (eat, drink, block, etc.)
+     * @param attributeModifiersEnabled Whether attribute modifiers are enabled
+     * @param attributeModifiers List of attribute modifiers
      */
     public CoinConfig(@NotNull String itemKey, @NotNull String fallbackItemKey,
-            @NotNull String displayName, @NotNull List<String> lore, 
+            @NotNull String displayName, @Nullable String description, @NotNull List<String> lore, 
             int customModelData, @Nullable String modelNamespace, 
-            @Nullable String modelKey, int maxStackSize, @NotNull String rarity) {
+            @Nullable String modelKey, int maxStackSize, @NotNull String rarity,
+            boolean enchantmentGlint, int useDuration, @NotNull String useAnimation,
+            boolean attributeModifiersEnabled, @NotNull List<AttributeModifier> attributeModifiers) {
         this.itemKey = itemKey;
         this.fallbackItemKey = fallbackItemKey;
         this.displayName = displayName;
+        this.description = description;
         this.lore = lore;
         this.customModelData = customModelData;
         this.modelNamespace = modelNamespace;
         this.modelKey = modelKey;
         this.maxStackSize = maxStackSize;
         this.rarity = rarity;
+        this.enchantmentGlint = enchantmentGlint;
+        this.useDuration = useDuration;
+        this.useAnimation = useAnimation;
+        this.attributeModifiersEnabled = attributeModifiersEnabled;
+        this.attributeModifiers = attributeModifiers;
         parseItemKey();
         parseFallbackItemKey();
     }
@@ -263,6 +305,63 @@ public class CoinConfig {
     @NotNull
     public String getRarity() {
         return rarity;
+    }
+    
+    /**
+     * Gets the description text.
+     * 
+     * @return The description, or null if not set
+     */
+    @Nullable
+    public String getDescription() {
+        return description;
+    }
+    
+    /**
+     * Gets whether enchantment glint is enabled.
+     * 
+     * @return true if glint is enabled
+     */
+    public boolean isEnchantmentGlint() {
+        return enchantmentGlint;
+    }
+    
+    /**
+     * Gets the use duration in ticks.
+     * 
+     * @return The use duration (0 = instant)
+     */
+    public int getUseDuration() {
+        return useDuration;
+    }
+    
+    /**
+     * Gets the use animation.
+     * 
+     * @return The use animation (eat, drink, block, etc.)
+     */
+    @NotNull
+    public String getUseAnimation() {
+        return useAnimation;
+    }
+    
+    /**
+     * Checks if attribute modifiers are enabled.
+     * 
+     * @return true if attribute modifiers are enabled
+     */
+    public boolean isAttributeModifiersEnabled() {
+        return attributeModifiersEnabled;
+    }
+    
+    /**
+     * Gets the list of attribute modifiers.
+     * 
+     * @return The list of attribute modifiers
+     */
+    @NotNull
+    public List<AttributeModifier> getAttributeModifiers() {
+        return attributeModifiers;
     }
 
     /**
