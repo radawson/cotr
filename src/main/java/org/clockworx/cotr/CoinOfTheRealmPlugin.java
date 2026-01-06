@@ -8,9 +8,14 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.clockworx.cotr.bank.AccountMembershipManager;
+import org.clockworx.cotr.bank.BankManager;
 import org.clockworx.cotr.command.CotrCommand;
+import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.listener.CoinListener;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
@@ -42,9 +47,28 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     
     private static CoinOfTheRealmPlugin instance;
     
+    private ConfigManager configManager;
+    private AccountMembershipManager membershipManager;
+    private BankManager bankManager;
+    
     @Override
     public void onEnable() {
         instance = this;
+        
+        // Load configuration
+        configManager = new ConfigManager(this);
+        if (!configManager.loadConfig()) {
+            getLogger().severe("Failed to load configuration! Plugin may not work correctly.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        
+        // Initialize account membership manager
+        membershipManager = new AccountMembershipManager(this);
+        membershipManager.load();
+        
+        // Initialize bank manager (requires ServiceIO if banking is enabled)
+        bankManager = new BankManager(this, membershipManager, configManager);
         
         // Register event listeners
         getServer().getPluginManager().registerEvents(new CoinListener(), this);
@@ -57,7 +81,11 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         startCoinPickupTask();
         
         getLogger().info("Coin of the Realm plugin has been enabled!");
-        getLogger().info("CustomModelData: " + COIN_CUSTOM_MODEL_DATA);
+        getLogger().info("CustomModelData: " + configManager.getCoinConfig().getCustomModelData());
+        getLogger().info("Coin item: " + configManager.getCoinConfig().getItemKey());
+        if (bankManager.isBankingEnabled()) {
+            getLogger().info("Banking features enabled with " + bankManager.getAccountCount() + " accounts");
+        }
     }
     
     /**
@@ -129,6 +157,11 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     
     @Override
     public void onDisable() {
+        // Save account memberships
+        if (membershipManager != null) {
+            membershipManager.save();
+        }
+        
         getLogger().info("Coin of the Realm plugin has been disabled!");
         instance = null;
     }
@@ -150,5 +183,35 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
      */
     public NamespacedKey getKey(String key) {
         return new NamespacedKey(this, key);
+    }
+    
+    /**
+     * Gets the ConfigManager instance.
+     * 
+     * @return The ConfigManager
+     */
+    @NotNull
+    public ConfigManager getConfigManager() {
+        return configManager;
+    }
+    
+    /**
+     * Gets the BankManager instance.
+     * 
+     * @return The BankManager, or null if not initialized
+     */
+    @Nullable
+    public BankManager getBankManager() {
+        return bankManager;
+    }
+    
+    /**
+     * Gets the AccountMembershipManager instance.
+     * 
+     * @return The AccountMembershipManager, or null if not initialized
+     */
+    @Nullable
+    public AccountMembershipManager getMembershipManager() {
+        return membershipManager;
     }
 }

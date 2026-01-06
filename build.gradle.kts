@@ -11,10 +11,15 @@ repositories {
     name = "papermc"
     url = uri("https://repo.papermc.io/repository/maven-public/")
   }
+  maven {
+    name = "thenextlvl"
+    url = uri("https://repo.thenextlvl.net/releases")
+  }
 }
 
 dependencies {
   compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+  compileOnly("net.thenextlvl.services:service-io:2.3.1")
   
   paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 }

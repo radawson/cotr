@@ -9,7 +9,7 @@ website: https://github.com/radawson/cotr
 commands:
   cotr:
     description: Coin of the Realm command
-    usage: /<command> <drop|give> [arguments]
+    usage: /<command> <drop|give|deposit|withdraw|balance|request|account|info> [arguments]
     aliases: [coin, coins]
     permission: cotr.command.use
     permission-message: You do not have permission to use this command.
@@ -27,6 +27,13 @@ permissions:
       cotr.command.use: true
       cotr.command.drop: true
       cotr.command.give: true
+      cotr.command.deposit: true
+      cotr.command.withdraw: true
+      cotr.command.balance: true
+      cotr.command.request: true
+      cotr.command.account: true
+      cotr.command.account.manage: true
+      cotr.command.info: true
   cotr.command.use:
     description: Use the /cotr command
     default: op
@@ -34,5 +41,26 @@ permissions:
     description: Use /cotr drop command
     default: op
   cotr.command.give:
-    description: Use /cotr give command
+    description: Use /cotr give command (physical coins or bank transfer)
+    default: op
+  cotr.command.deposit:
+    description: Use /cotr deposit command
+    default: true
+  cotr.command.withdraw:
+    description: Use /cotr withdraw command
+    default: true
+  cotr.command.balance:
+    description: Use /cotr balance command
+    default: true
+  cotr.command.request:
+    description: Use /cotr request command
+    default: true
+  cotr.command.account:
+    description: Use /cotr account commands
+    default: true
+  cotr.command.account.manage:
+    description: Manage account memberships (add/remove members)
+    default: true
+  cotr.command.info:
+    description: Use /cotr info command (admin)
     default: op

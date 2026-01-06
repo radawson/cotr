@@ -1,0 +1,20 @@
+coin:
+  # Base material (fallback appearance without resource pack)
+  item: "minecraft:gold_nugget"
+  
+  # Item model for resource pack (namespace:key format)
+  # This references assets/cotr/items/coin.json in the resource pack
+  model: "cotr:coin"
+  
+  # Display name for the coin
+  display-name: "Coin of the Realm"
+  
+  # Lore lines for the coin
+  lore:
+    - "A valuable currency"
+    - "used throughout the realm."
+
+banking:
+  enabled: true
+  default-account-pattern: "{player-uuid}-main"
+  membership-storage: "yaml"
