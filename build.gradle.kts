@@ -24,6 +24,8 @@ dependencies {
   // Database dependencies
   implementation("com.zaxxer:HikariCP:5.1.0")
   implementation("org.xerial:sqlite-jdbc:3.45.3.0")
+  // MySQL connector (optional, only needed if using MySQL)
+  implementation("com.mysql:mysql-connector-j:9.1.0")
   
   paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 }
@@ -65,9 +67,29 @@ tasks.jar {
     attributes["paperweight-mappings-namespace"] = "mojang"
   }
 }
-// if you have shadowJar configured
+// Configure shadowJar to include dependencies
 tasks.shadowJar {
   manifest {
     attributes["paperweight-mappings-namespace"] = "mojang"
   }
+  
+  // Relocate database dependencies to avoid conflicts with other plugins
+  relocate("com.zaxxer.hikari", "org.clockworx.cotr.libs.hikari")
+  relocate("org.sqlite", "org.clockworx.cotr.libs.sqlite")
+  relocate("com.mysql.cj", "org.clockworx.cotr.libs.mysql") // MySQL connector
+  relocate("org.slf4j", "org.clockworx.cotr.libs.slf4j") // HikariCP uses SLF4J
+  
+  // Merge service files - critical for JDBC driver service provider loading
+  // This ensures META-INF/services files are properly merged when relocating classes
+  mergeServiceFiles()
+  
+  // Archive configuration
+  archiveBaseName.set("CoinOfTheRealm")
+  archiveVersion.set(project.version.toString())
+  
+  // Set the classifier to empty so it replaces the regular JAR
+  archiveClassifier.set("")
+  
+  // Shadow plugin automatically includes all runtime dependencies by default
+  // No need to explicitly set configurations
 }

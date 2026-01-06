@@ -525,8 +525,10 @@ public class ConfigManager {
             File dbFile = new File(plugin.getDataFolder(), databaseFile);
             return dbFile.getAbsolutePath();
         } else if ("mysql".equals(databaseType)) {
-            // For MySQL, return JDBC connection string
-            return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true",
+            // For MySQL, return JDBC connection string with SSL disabled and auto-reconnect enabled
+            // useSSL=false is required for older MySQL servers or when SSL is not configured
+            // autoReconnect=true helps with connection stability
+            return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&autoReconnect=true",
                 databaseHost, databasePort, databaseName);
         } else {
             throw new IllegalStateException("Unsupported database type: " + databaseType);

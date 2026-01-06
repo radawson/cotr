@@ -1,5 +1,6 @@
 package org.clockworx.cotr.bank.storage;
 
+// Use original package names - shadowJar will relocate these at build time
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
@@ -75,14 +76,17 @@ public class DatabaseBankStorage implements BankStorage {
                 
                 if ("sqlite".equals(databaseType)) {
                     config.setJdbcUrl("jdbc:sqlite:" + connectionString);
-                    config.setDriverClassName("org.sqlite.JDBC");
+                    // Use relocated class name (relocated by shadowJar)
+                    config.setDriverClassName("org.clockworx.cotr.libs.sqlite.JDBC");
                     config.setMaximumPoolSize(1); // SQLite doesn't support multiple connections well
                     config.setConnectionTimeout(30000);
                     config.setIdleTimeout(600000);
                     config.setMaxLifetime(1800000);
                 } else if ("mysql".equals(databaseType)) {
+                    // Connection string already includes useSSL=false&autoReconnect=true from ConfigManager
                     config.setJdbcUrl(connectionString);
-                    config.setDriverClassName("com.mysql.cj.jdbc.Driver");
+                    // Use relocated class name (relocated by shadowJar)
+                    config.setDriverClassName("org.clockworx.cotr.libs.mysql.jdbc.Driver");
                     config.setMaximumPoolSize(10);
                     config.setConnectionTimeout(30000);
                     config.setIdleTimeout(600000);
