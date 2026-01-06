@@ -28,6 +28,8 @@ dependencies {
   implementation("org.xerial:sqlite-jdbc:3.45.3.0")
   // MySQL connector (optional, only needed if using MySQL)
   implementation("com.mysql:mysql-connector-j:9.1.0")
+  // SLF4J implementation - bridges SLF4J to java.util.logging (used by HikariCP)
+  implementation("org.slf4j:slf4j-jdk14:2.0.16")
   
   paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 }
@@ -80,6 +82,7 @@ tasks.shadowJar {
   relocate("org.sqlite", "org.clockworx.cotr.libs.sqlite")
   relocate("com.mysql.cj", "org.clockworx.cotr.libs.mysql") // MySQL connector
   relocate("org.slf4j", "org.clockworx.cotr.libs.slf4j") // HikariCP uses SLF4J
+  // Note: slf4j-jdk14 implementation classes are automatically relocated with org.slf4j
   
   // Merge service files - critical for JDBC driver service provider loading
   // This ensures META-INF/services files are properly merged when relocating classes
