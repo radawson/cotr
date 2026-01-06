@@ -42,8 +42,9 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     /**
      * NBT key used to identify coin items.
      * Items with this NBT key are considered coins.
+     * Note: This is just the key part - the namespace is automatically the plugin name.
      */
-    public static final String COIN_NBT_KEY = "cotr:coin";
+    public static final String COIN_NBT_KEY = "coin";
     
     private static CoinOfTheRealmPlugin instance;
     
