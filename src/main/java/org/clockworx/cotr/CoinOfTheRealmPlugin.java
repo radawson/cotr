@@ -187,53 +187,34 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
             return;
         }
         
-        // Register with ServiceIO (synchronously)
+        // Register with ServiceIO using Bukkit's ServicesManager
         try {
             Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
             
             debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registering BankController");
             
-            // Register with ServiceIO using reflection to avoid type issues
+            // Register with Bukkit's ServicesManager
+            // ServicesManager.register(Class<T>, T provider, Plugin, ServicePriority)
             org.bukkit.plugin.ServicesManager servicesManager = getServer().getServicesManager();
             
-            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registering BankController with ServiceIO");
-            
-            // Use reflection to call register method
+            // Get the ServicePriority enum
+            String priorityStr = configManager.getServicePriority();
+            org.bukkit.plugin.ServicePriority priority;
             try {
-                // Try the 3-parameter version first (Class, Object, Plugin)
-                java.lang.reflect.Method registerMethod = servicesManager.getClass().getMethod(
-                    "register",
-                    Class.class,
-                    Object.class,
-                    org.bukkit.plugin.Plugin.class
-                );
-                registerMethod.invoke(servicesManager, bankControllerClass, bankControllerProxy, this);
-                debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 3-parameter method");
-            } catch (NoSuchMethodException e) {
-                // Try 4-parameter version with priority (if it exists)
-                try {
-                    // Try to find PluginPriority enum
-                    Class<?> priorityClass = Class.forName("org.bukkit.plugin.PluginPriority");
-                    java.lang.reflect.Method registerMethod = servicesManager.getClass().getMethod(
-                        "register",
-                        Class.class,
-                        Object.class,
-                        org.bukkit.plugin.Plugin.class,
-                        priorityClass
-                    );
-                    // Get NORMAL priority
-                    Object[] priorities = priorityClass.getEnumConstants();
-                    Object normalPriority = priorities[2]; // NORMAL is typically index 2
-                    registerMethod.invoke(servicesManager, bankControllerClass, bankControllerProxy, this, normalPriority);
-                    debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 4-parameter method with priority");
-                } catch (Exception e2) {
-                    throw new RuntimeException("Failed to register BankController: No suitable register method found", e2);
-                }
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to register BankController: " + e.getMessage(), e);
+                priority = org.bukkit.plugin.ServicePriority.valueOf(priorityStr.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                priority = org.bukkit.plugin.ServicePriority.Normal;
+                debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Invalid priority '{}', using Normal", priorityStr);
             }
             
-            getLogger().info("Registered Coin of the Realm BankController with ServiceIO");
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registering with priority: {}", priority);
+            
+            // Use unchecked cast since we're using reflection to get the class
+            @SuppressWarnings("unchecked")
+            Class<Object> serviceClass = (Class<Object>) bankControllerClass;
+            servicesManager.register(serviceClass, bankControllerProxy, this, priority);
+            
+            getLogger().info("Registered Coin of the Realm BankController with ServiceIO (priority: " + priority + ")");
             getLogger().info("Other plugins can now discover and use CotR banking via ServiceIO");
             debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registration successful");
             

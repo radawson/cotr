@@ -6,6 +6,11 @@ description: A custom currency item - Coin of the Realm
 author: RADawson
 website: https://github.com/radawson/cotr
 
+# ServiceIO is optional - banking features work without it, but if available
+# we register our BankController with ServiceIO for plugin interoperability
+softdepend:
+  - ServiceIO
+
 commands:
   cotr:
     description: Coin of the Realm command

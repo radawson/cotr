@@ -5,3 +5,12 @@ api-version: 1.21.11
 description: A custom currency item - Coin of the Realm
 author: RADawson
 website: https://github.com/radawson/cotr
+
+# ServiceIO is optional - banking features work without it, but if available
+# we register our BankController with ServiceIO for plugin interoperability
+dependencies:
+  server:
+    ServiceIO:
+      load: BEFORE
+      required: false
+      join-classpath: true
