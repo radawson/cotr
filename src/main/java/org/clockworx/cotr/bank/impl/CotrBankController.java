@@ -1,8 +1,5 @@
 package org.clockworx.cotr.bank.impl;
 
-import net.thenextlvl.service.api.Controller;
-import net.thenextlvl.service.api.economy.bank.Bank;
-import net.thenextlvl.service.api.economy.bank.BankController;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
@@ -23,7 +20,7 @@ import java.util.stream.Collectors;
  * CotrBankController - Implementation of ServiceIO's BankController interface
  * 
  * This class provides a complete banking system for Coin of the Realm that:
- * - Implements the full ServiceIO BankController API
+ * - Implements the full ServiceIO BankController API (via reflection proxy)
  * - Uses database storage for persistence
  * - Provides in-memory caching for performance
  * - Supports world-specific banks
@@ -34,8 +31,12 @@ import java.util.stream.Collectors;
  * - Loading banks by name, owner, or world
  * - Formatting currency amounts
  * - Managing bank memberships (delegated to AccountMembershipManager)
+ * 
+ * Note: This class does not directly implement BankController to avoid requiring
+ * ServiceIO at compile time. A dynamic proxy is created at runtime when ServiceIO
+ * is available to implement the interface.
  */
-public class CotrBankController implements BankController, Controller {
+public class CotrBankController {
     
     private final CoinOfTheRealmPlugin plugin;
     private final BankStorage storage;
@@ -46,7 +47,8 @@ public class CotrBankController implements BankController, Controller {
     private final Map<String, CotrBank> ownerWorldCache = new ConcurrentHashMap<>(); // Key: "uuid:world"
     
     // Cache for all banks (lazy-loaded)
-    private volatile Set<Bank> allBanksCache = null;
+    // Using Object instead of Bank to avoid compile-time dependency on ServiceIO
+    private volatile Set<Object> allBanksCache = null;
     private volatile long allBanksCacheTime = 0;
     private static final long CACHE_TTL = 60000; // 1 minute
     
@@ -62,19 +64,32 @@ public class CotrBankController implements BankController, Controller {
         plugin.debug("CotrBankController created");
     }
     
-    @Override
+    /**
+     * Gets the name of this controller.
+     * 
+     * @return The controller name
+     */
     @NotNull
     public String getName() {
         return "Coin of the Realm Bank Controller";
     }
     
-    @Override
+    /**
+     * Gets the plugin instance.
+     * 
+     * @return The plugin instance
+     */
     @NotNull
     public org.bukkit.plugin.Plugin getPlugin() {
         return plugin;
     }
     
-    @Override
+    /**
+     * Formats a currency amount as a string.
+     * 
+     * @param amount The amount to format
+     * @return Formatted string
+     */
     @NotNull
     public String format(@NotNull Number amount) {
         int coins = amount.intValue();
@@ -84,28 +99,45 @@ public class CotrBankController implements BankController, Controller {
         return coins + " Coins of the Realm";
     }
     
-    @Override
+    /**
+     * Returns the number of fractional digits supported.
+     * 
+     * @return Always returns 0 (coins are whole numbers)
+     */
     public int fractionalDigits() {
         // Coins are whole numbers, no fractional digits
         return 0;
     }
     
-    @Override
+    /**
+     * Creates a new global bank account.
+     * 
+     * @param uuid The bank owner's UUID
+     * @param name Unique bank name
+     * @return CompletableFuture that completes with the created bank
+     */
     @NotNull
-    public CompletableFuture<Bank> createBank(@NotNull UUID uuid, @NotNull String name) {
+    public CompletableFuture<Object> createBank(@NotNull UUID uuid, @NotNull String name) {
         return createBank(uuid, name, null);
     }
     
-    @Override
+    /**
+     * Creates a new world-specific bank account.
+     * 
+     * @param uuid The bank owner's UUID
+     * @param name Unique bank name
+     * @param world The world for this bank, or null for global
+     * @return CompletableFuture that completes with the created bank
+     */
     @NotNull
-    public CompletableFuture<Bank> createBank(@NotNull UUID uuid, @NotNull String name, @Nullable World world) {
+    public CompletableFuture<Object> createBank(@NotNull UUID uuid, @NotNull String name, @Nullable World world) {
         plugin.debug("CotrBankController.createBank() - uuid={}, name={}, world={}", uuid, name, world != null ? world.getName() : "null");
         
         // Check if bank already exists
         return storage.bankExists(name).thenCompose(exists -> {
             if (exists) {
                 plugin.debug("CotrBankController.createBank() - Bank already exists: {}", name);
-                CompletableFuture<Bank> future = new CompletableFuture<>();
+                CompletableFuture<Object> future = new CompletableFuture<>();
                 future.completeExceptionally(new IllegalStateException("Bank with name '" + name + "' already exists"));
                 return future;
             }
@@ -119,7 +151,7 @@ public class CotrBankController implements BankController, Controller {
             return existingBankFuture.thenCompose(existingBank -> {
                 if (existingBank.isPresent()) {
                     plugin.debug("CotrBankController.createBank() - Owner already has a bank in this world");
-                    CompletableFuture<Bank> future = new CompletableFuture<>();
+                    CompletableFuture<Object> future = new CompletableFuture<>();
                     future.completeExceptionally(new IllegalStateException("Owner already has a bank" + (worldName != null ? " in world " + worldName : "")));
                     return future;
                 }
@@ -151,9 +183,14 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Loads a bank by name.
+     * 
+     * @param name The bank name
+     * @return CompletableFuture that completes with the bank, or null if not found
+     */
     @NotNull
-    public CompletableFuture<Bank> loadBank(@NotNull String name) {
+    public CompletableFuture<Object> loadBank(@NotNull String name) {
         plugin.debug("CotrBankController.loadBank() - name={}", name);
         
         // Check cache first
@@ -186,9 +223,14 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Loads a global bank by owner UUID.
+     * 
+     * @param uuid The owner UUID
+     * @return CompletableFuture that completes with the bank, or null if not found
+     */
     @NotNull
-    public CompletableFuture<Bank> loadBank(@NotNull UUID uuid) {
+    public CompletableFuture<Object> loadBank(@NotNull UUID uuid) {
         plugin.debug("CotrBankController.loadBank() - uuid={}", uuid);
         
         // Check cache first
@@ -217,9 +259,15 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Loads a world-specific bank by owner and world.
+     * 
+     * @param uuid The owner UUID
+     * @param world The world
+     * @return CompletableFuture that completes with the bank, or null if not found
+     */
     @NotNull
-    public CompletableFuture<Bank> loadBank(@NotNull UUID uuid, @NotNull World world) {
+    public CompletableFuture<Object> loadBank(@NotNull UUID uuid, @NotNull World world) {
         plugin.debug("CotrBankController.loadBank() - uuid={}, world={}", uuid, world.getName());
         
         String cacheKey = uuid + ":" + world.getName();
@@ -250,9 +298,13 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Loads all banks.
+     * 
+     * @return CompletableFuture that completes with an unmodifiable set of all banks
+     */
     @NotNull
-    public CompletableFuture<@Unmodifiable Set<Bank>> loadBanks() {
+    public CompletableFuture<@Unmodifiable Set<Object>> loadBanks() {
         plugin.debug("CotrBankController.loadBanks() - Loading all banks");
         
         // Check cache
@@ -263,7 +315,7 @@ public class CotrBankController implements BankController, Controller {
         
         // Load from storage
         return storage.loadAllBanks().thenApply(records -> {
-            Set<Bank> banks = new HashSet<>();
+            Set<Object> banks = new HashSet<>();
             
             for (BankRecord record : records) {
                 // Check if already cached
@@ -292,13 +344,18 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Loads all banks for a specific world.
+     * 
+     * @param world The world
+     * @return CompletableFuture that completes with an unmodifiable set of banks
+     */
     @NotNull
-    public CompletableFuture<@Unmodifiable Set<Bank>> loadBanks(@NotNull World world) {
+    public CompletableFuture<@Unmodifiable Set<Object>> loadBanks(@NotNull World world) {
         plugin.debug("CotrBankController.loadBanks() - world={}", world.getName());
         
         return storage.loadBanksByWorld(world.getName()).thenApply(records -> {
-            Set<Bank> banks = new HashSet<>();
+            Set<Object> banks = new HashSet<>();
             
             for (BankRecord record : records) {
                 // Check if already cached
@@ -319,7 +376,12 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Deletes a bank by name.
+     * 
+     * @param name The bank name
+     * @return CompletableFuture that completes with true if deleted, false if not found
+     */
     @NotNull
     public CompletableFuture<Boolean> deleteBank(@NotNull String name) {
         plugin.debug("CotrBankController.deleteBank() - name={}", name);
@@ -349,7 +411,12 @@ public class CotrBankController implements BankController, Controller {
         });
     }
     
-    @Override
+    /**
+     * Deletes a global bank by owner UUID.
+     * 
+     * @param uuid The owner UUID
+     * @return CompletableFuture that completes with true if deleted, false if not found
+     */
     @NotNull
     public CompletableFuture<Boolean> deleteBank(@NotNull UUID uuid) {
         plugin.debug("CotrBankController.deleteBank() - uuid={}", uuid);
@@ -359,11 +426,29 @@ public class CotrBankController implements BankController, Controller {
             if (bank == null) {
                 return CompletableFuture.completedFuture(false);
             }
-            return deleteBank(bank.getName());
+            // bank is Object, but we know it's a CotrBank
+            if (bank instanceof CotrBank) {
+                return deleteBank(((CotrBank) bank).getName());
+            }
+            // Fallback: use reflection to get name
+            try {
+                java.lang.reflect.Method getNameMethod = bank.getClass().getMethod("getName");
+                String bankName = (String) getNameMethod.invoke(bank);
+                return deleteBank(bankName);
+            } catch (Exception e) {
+                plugin.debug("CotrBankController.deleteBank() - Failed to get bank name: {}", e.getMessage());
+                return CompletableFuture.completedFuture(false);
+            }
         });
     }
     
-    @Override
+    /**
+     * Deletes a world-specific bank by owner and world.
+     * 
+     * @param uuid The owner UUID
+     * @param world The world
+     * @return CompletableFuture that completes with true if deleted, false if not found
+     */
     @NotNull
     public CompletableFuture<Boolean> deleteBank(@NotNull UUID uuid, @NotNull World world) {
         plugin.debug("CotrBankController.deleteBank() - uuid={}, world={}", uuid, world.getName());
@@ -373,14 +458,30 @@ public class CotrBankController implements BankController, Controller {
             if (bank == null) {
                 return CompletableFuture.completedFuture(false);
             }
-            return deleteBank(bank.getName());
+            // bank is Object, but we know it's a CotrBank
+            if (bank instanceof CotrBank) {
+                return deleteBank(((CotrBank) bank).getName());
+            }
+            // Fallback: use reflection to get name
+            try {
+                java.lang.reflect.Method getNameMethod = bank.getClass().getMethod("getName");
+                String bankName = (String) getNameMethod.invoke(bank);
+                return deleteBank(bankName);
+            } catch (Exception e) {
+                plugin.debug("CotrBankController.deleteBank() - Failed to get bank name: {}", e.getMessage());
+                return CompletableFuture.completedFuture(false);
+            }
         });
     }
     
-    @Override
+    /**
+     * Gets all cached banks.
+     * 
+     * @return An unmodifiable set of all cached banks
+     */
     @NotNull
     @Unmodifiable
-    public Set<Bank> getBanks() {
+    public Set<Object> getBanks() {
         plugin.debug("CotrBankController.getBanks() - Getting all cached banks");
         
         // Return cached banks if available and fresh
@@ -392,10 +493,15 @@ public class CotrBankController implements BankController, Controller {
         return Collections.unmodifiableSet(new HashSet<>(bankCache.values()));
     }
     
-    @Override
+    /**
+     * Gets all cached banks for a specific world.
+     * 
+     * @param world The world
+     * @return An unmodifiable set of banks for the world
+     */
     @NotNull
     @Unmodifiable
-    public Set<Bank> getBanks(@NotNull World world) {
+    public Set<Object> getBanks(@NotNull World world) {
         plugin.debug("CotrBankController.getBanks() - world={}", world.getName());
         
         String worldName = world.getName();
@@ -407,23 +513,39 @@ public class CotrBankController implements BankController, Controller {
             .collect(Collectors.toUnmodifiableSet());
     }
     
-    @Override
+    /**
+     * Gets a cached bank by name.
+     * 
+     * @param name The bank name
+     * @return Optional containing the bank if cached
+     */
     @NotNull
-    public Optional<Bank> getBank(@NotNull String name) {
+    public Optional<Object> getBank(@NotNull String name) {
         plugin.debug("CotrBankController.getBank() - name={}", name);
         return Optional.ofNullable(bankCache.get(name));
     }
     
-    @Override
+    /**
+     * Gets a cached global bank by owner UUID.
+     * 
+     * @param uuid The owner UUID
+     * @return Optional containing the bank if cached
+     */
     @NotNull
-    public Optional<Bank> getBank(@NotNull UUID uuid) {
+    public Optional<Object> getBank(@NotNull UUID uuid) {
         plugin.debug("CotrBankController.getBank() - uuid={}", uuid);
         return Optional.ofNullable(ownerCache.get(uuid));
     }
     
-    @Override
+    /**
+     * Gets a cached world-specific bank by owner and world.
+     * 
+     * @param uuid The owner UUID
+     * @param world The world
+     * @return Optional containing the bank if cached
+     */
     @NotNull
-    public Optional<Bank> getBank(@NotNull UUID uuid, @NotNull World world) {
+    public Optional<Object> getBank(@NotNull UUID uuid, @NotNull World world) {
         plugin.debug("CotrBankController.getBank() - uuid={}, world={}", uuid, world.getName());
         String cacheKey = uuid + ":" + world.getName();
         return Optional.ofNullable(ownerWorldCache.get(cacheKey));

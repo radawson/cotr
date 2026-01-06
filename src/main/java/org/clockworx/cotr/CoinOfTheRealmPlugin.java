@@ -177,6 +177,16 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         // Create BankController instance (storage is already initialized)
         cotrBankController = new CotrBankController(this, databaseBankStorage);
         
+        // Create a dynamic proxy that implements BankController interface
+        // This allows us to register with ServiceIO without requiring the interface at compile time
+        Object bankControllerProxy = org.clockworx.cotr.bank.impl.BankControllerProxy.createProxy(this, cotrBankController);
+        
+        if (bankControllerProxy == null) {
+            getLogger().warning("Failed to create BankController proxy: BankController interface not found");
+            debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Proxy creation failed");
+            return;
+        }
+        
         // Register with ServiceIO (synchronously)
         try {
             Class<?> bankControllerClass = Class.forName("net.thenextlvl.service.api.economy.bank.BankController");
@@ -197,7 +207,7 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
                     Object.class,
                     org.bukkit.plugin.Plugin.class
                 );
-                registerMethod.invoke(servicesManager, bankControllerClass, cotrBankController, this);
+                registerMethod.invoke(servicesManager, bankControllerClass, bankControllerProxy, this);
                 debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 3-parameter method");
             } catch (NoSuchMethodException e) {
                 // Try 4-parameter version with priority (if it exists)
@@ -214,7 +224,7 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
                     // Get NORMAL priority
                     Object[] priorities = priorityClass.getEnumConstants();
                     Object normalPriority = priorities[2]; // NORMAL is typically index 2
-                    registerMethod.invoke(servicesManager, bankControllerClass, cotrBankController, this, normalPriority);
+                    registerMethod.invoke(servicesManager, bankControllerClass, bankControllerProxy, this, normalPriority);
                     debug("CoinOfTheRealmPlugin.initializeOwnBankController() - Registered using 4-parameter method with priority");
                 } catch (Exception e2) {
                     throw new RuntimeException("Failed to register BankController: No suitable register method found", e2);

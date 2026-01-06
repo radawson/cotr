@@ -1,6 +1,5 @@
 package org.clockworx.cotr.bank.impl;
 
-import net.thenextlvl.service.api.economy.bank.Bank;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
@@ -14,16 +13,20 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * CotrBank - Implementation of ServiceIO's Bank interface
+ * CotrBank - Bank account implementation for Coin of the Realm
  * 
  * This class represents a bank account in the Coin of the Realm system.
- * It implements the ServiceIO Bank interface to allow interoperability
+ * It provides the same API as ServiceIO's Bank interface to allow interoperability
  * with other plugins that use ServiceIO's banking API.
+ * 
+ * Note: This class does not directly implement Bank to avoid requiring ServiceIO
+ * at compile time. The methods match the Bank interface signature and will work
+ * when accessed through reflection or when ServiceIO is available.
  * 
  * The bank is backed by BankStorage for persistence and provides
  * thread-safe operations for balance management.
  */
-public class CotrBank implements Bank {
+public class CotrBank {
     
     private final CoinOfTheRealmPlugin plugin;
     private final BankStorage storage;
@@ -79,19 +82,31 @@ public class CotrBank implements Bank {
         this.updatedAt = System.currentTimeMillis();
     }
     
-    @Override
+    /**
+     * Gets the bank owner's UUID.
+     * 
+     * @return The owner UUID
+     */
     @NotNull
     public UUID getOwner() {
         return ownerUuid;
     }
     
-    @Override
+    /**
+     * Gets the bank name.
+     * 
+     * @return The bank name
+     */
     @NotNull
     public String getName() {
         return name;
     }
     
-    @Override
+    /**
+     * Gets the world for this bank (if world-specific).
+     * 
+     * @return The world, or empty for global banks
+     */
     @NotNull
     public java.util.Optional<World> getWorld() {
         if (worldName == null) {
@@ -101,13 +116,22 @@ public class CotrBank implements Bank {
         return java.util.Optional.ofNullable(world);
     }
     
-    @Override
+    /**
+     * Gets the current balance.
+     * 
+     * @return The balance
+     */
     @NotNull
     public BigDecimal getBalance() {
         return balance;
     }
     
-    @Override
+    /**
+     * Sets the bank owner.
+     * 
+     * @param ownerUuid The new owner UUID
+     * @return true if successful
+     */
     public boolean setOwner(@NotNull UUID ownerUuid) {
         plugin.debug("CotrBank.setOwner() - name={}, newOwner={}", name, ownerUuid);
         synchronized (this) {
@@ -119,7 +143,12 @@ public class CotrBank implements Bank {
         }
     }
     
-    @Override
+    /**
+     * Removes a member from the bank.
+     * 
+     * @param memberUuid The member UUID
+     * @return true if removed
+     */
     public boolean removeMember(@NotNull UUID memberUuid) {
         plugin.debug("CotrBank.removeMember() - name={}, member={}", name, memberUuid);
         // Note: Our implementation uses AccountMembershipManager for member management
@@ -129,7 +158,12 @@ public class CotrBank implements Bank {
         return false;
     }
     
-    @Override
+    /**
+     * Checks if a UUID is a member of the bank.
+     * 
+     * @param memberUuid The member UUID
+     * @return true if member
+     */
     public boolean isMember(@NotNull UUID memberUuid) {
         plugin.debug("CotrBank.isMember() - name={}, member={}", name, memberUuid);
         // Note: Our implementation uses AccountMembershipManager for member management
@@ -139,7 +173,12 @@ public class CotrBank implements Bank {
         return ownerUuid.equals(memberUuid);
     }
     
-    @Override
+    /**
+     * Adds a member to the bank.
+     * 
+     * @param memberUuid The member UUID
+     * @return true if added
+     */
     public boolean addMember(@NotNull UUID memberUuid) {
         plugin.debug("CotrBank.addMember() - name={}, member={}", name, memberUuid);
         // Note: Our implementation uses AccountMembershipManager for member management
@@ -149,7 +188,11 @@ public class CotrBank implements Bank {
         return false;
     }
     
-    @Override
+    /**
+     * Gets all member UUIDs.
+     * 
+     * @return Set of member UUIDs
+     */
     @NotNull
     public java.util.Set<UUID> getMembers() {
         plugin.debug("CotrBank.getMembers() - name={}", name);
@@ -162,7 +205,11 @@ public class CotrBank implements Bank {
         return members;
     }
     
-    @Override
+    /**
+     * Sets the balance directly.
+     * 
+     * @param amount The new balance
+     */
     public void setBalance(Number amount) {
         plugin.debug("CotrBank.setBalance() - name={}, amount={}", name, amount);
         BigDecimal newBalance = amount instanceof BigDecimal ? (BigDecimal) amount : BigDecimal.valueOf(amount.doubleValue());
@@ -185,7 +232,13 @@ public class CotrBank implements Bank {
         }
     }
     
-    @Override
+    /**
+     * Deposits funds into the bank.
+     * 
+     * @param amount The amount to deposit
+     * @return The new balance
+     * @throws IllegalArgumentException if amount is negative
+     */
     @NotNull
     public BigDecimal deposit(Number amount) {
         BigDecimal bigDecimalAmount = amount instanceof BigDecimal ? (BigDecimal) amount : BigDecimal.valueOf(amount.doubleValue());
@@ -226,7 +279,14 @@ public class CotrBank implements Bank {
         }
     }
     
-    @Override
+    /**
+     * Withdraws funds from the bank.
+     * 
+     * @param amount The amount to withdraw
+     * @return The new balance
+     * @throws IllegalArgumentException if amount is negative
+     * @throws IllegalStateException if insufficient funds
+     */
     @NotNull
     public BigDecimal withdraw(Number amount) {
         BigDecimal bigDecimalAmount = amount instanceof BigDecimal ? (BigDecimal) amount : BigDecimal.valueOf(amount.doubleValue());
