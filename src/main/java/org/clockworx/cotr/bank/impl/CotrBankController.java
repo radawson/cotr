@@ -124,8 +124,12 @@ public class CotrBankController {
     /**
      * Creates a new world-specific bank account.
      * 
-     * @param uuid The bank owner's UUID
-     * @param name Unique bank name
+     * Multiple banks can be created for the same owner UUID. Bank names must be unique
+     * across all banks. Access control is managed separately via AccountMembershipManager,
+     * which supports many-to-many relationships between players and accounts.
+     * 
+     * @param uuid The bank owner's UUID (technical owner for ServiceIO compatibility)
+     * @param name Unique bank name (must be unique across all banks)
      * @param world The world for this bank, or null for global
      * @return CompletableFuture that completes with the created bank
      */
@@ -133,7 +137,7 @@ public class CotrBankController {
     public CompletableFuture<Object> createBank(@NotNull UUID uuid, @NotNull String name, @Nullable World world) {
         plugin.debug("CotrBankController.createBank() - uuid={}, name={}, world={}", uuid, name, world != null ? world.getName() : "null");
         
-        // Check if bank already exists
+        // Check if bank already exists (name uniqueness check)
         return storage.bankExists(name).thenCompose(exists -> {
             if (exists) {
                 plugin.debug("CotrBankController.createBank() - Bank already exists: {}", name);
@@ -142,43 +146,30 @@ public class CotrBankController {
                 return future;
             }
             
-            // Check if owner already has a bank in this world (or global)
+            // Create the bank
             String worldName = world != null ? world.getName() : null;
-            CompletableFuture<Optional<BankRecord>> existingBankFuture = worldName != null ?
-                storage.loadBankByOwner(uuid, worldName) :
-                storage.loadBankByOwner(uuid);
-            
-            return existingBankFuture.thenCompose(existingBank -> {
-                if (existingBank.isPresent()) {
-                    plugin.debug("CotrBankController.createBank() - Owner already has a bank in this world");
-                    CompletableFuture<Object> future = new CompletableFuture<>();
-                    future.completeExceptionally(new IllegalStateException("Owner already has a bank" + (worldName != null ? " in world " + worldName : "")));
-                    return future;
+            return storage.createBank(name, uuid, worldName, BigDecimal.ZERO).thenApply(success -> {
+                if (!success) {
+                    throw new IllegalStateException("Failed to create bank: " + name);
                 }
                 
-                // Create the bank
-                return storage.createBank(name, uuid, worldName, BigDecimal.ZERO).thenApply(success -> {
-                    if (!success) {
-                        throw new IllegalStateException("Failed to create bank: " + name);
-                    }
-                    
-                    // Create CotrBank instance and cache it
-                    CotrBank bank = new CotrBank(plugin, storage, name, uuid, worldName);
-                    bankCache.put(name, bank);
-                    
-                    // Update owner cache
-                    if (worldName == null) {
-                        ownerCache.put(uuid, bank);
-                    } else {
-                        ownerWorldCache.put(uuid + ":" + worldName, bank);
-                    }
-                    
-                    // Invalidate all banks cache
-                    invalidateAllBanksCache();
-                    
-                    plugin.debug("CotrBankController.createBank() - Bank created and cached: {}", name);
-                    return bank;
-                });
+                // Create CotrBank instance and cache it
+                CotrBank bank = new CotrBank(plugin, storage, name, uuid, worldName);
+                bankCache.put(name, bank);
+                
+                // Update owner cache (for backward compatibility with loadBank(UUID) methods)
+                // Note: These caches only store one bank per owner, but multiple banks per owner are supported
+                if (worldName == null) {
+                    ownerCache.put(uuid, bank);
+                } else {
+                    ownerWorldCache.put(uuid + ":" + worldName, bank);
+                }
+                
+                // Invalidate all banks cache
+                invalidateAllBanksCache();
+                
+                plugin.debug("CotrBankController.createBank() - Bank created and cached: {}", name);
+                return bank;
             });
         });
     }
