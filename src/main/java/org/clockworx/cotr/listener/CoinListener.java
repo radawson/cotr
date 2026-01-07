@@ -1,21 +1,13 @@
 package org.clockworx.cotr.listener;
 
-import org.bukkit.entity.Item;
-import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerInteractEntityEvent;
-import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerResourcePackStatusEvent;
-import org.bukkit.inventory.ItemStack;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
-import org.clockworx.cotr.entity.CoinEntityManager;
-import org.clockworx.cotr.item.CoinItem;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -24,18 +16,13 @@ import java.util.UUID;
 /**
  * CoinListener - Handles events related to coin items
  * 
- * This listener manages the lifecycle of coin items in the world:
+ * This listener manages:
+ * - Resource pack application on player join
+ * - Resource pack status tracking and retries
  * 
- * 1. When a player drops a coin:
- *    - Detects if the dropped item is a coin
- *    - Cancels the default Item entity creation
- *    - Creates a custom ItemDisplay entity instead
- * 
- * 2. When a player picks up a coin:
- *    - Detects if the picked up entity is a coin display
- *    - Converts the ItemDisplay back to an ItemStack
- *    - Gives the coin to the player
- *    - Prevents duplication exploits
+ * Coins behave like vanilla items - they drop and pick up normally.
+ * The custom model is applied via the item_model component and rendered
+ * by the resource pack automatically.
  */
 public class CoinListener implements Listener {
     
@@ -44,137 +31,6 @@ public class CoinListener implements Listener {
     private final Map<UUID, Long> lastRetryTimes = new HashMap<>();
     // Track players who have successfully loaded the resource pack
     private final Map<UUID, Boolean> packLoaded = new HashMap<>();
-    
-    /**
-     * Handles when a player drops an item.
-     * If the item is a coin, replaces the standard Item entity with an ItemDisplay.
-     * 
-     * @param event The PlayerDropItemEvent
-     */
-    @EventHandler(priority = EventPriority.HIGH)
-    public void onPlayerDropItem(PlayerDropItemEvent event) {
-        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
-        Player player = event.getPlayer();
-        Item droppedItemEntity = event.getItemDrop();
-        ItemStack droppedItem = droppedItemEntity.getItemStack().clone(); // Clone to preserve data
-        
-        plugin.debug("CoinListener.onPlayerDropItem() - player={}, item={}, amount={}", 
-            player.getName(), droppedItem.getType(), droppedItem.getAmount());
-        
-        // Check if the dropped item is a coin
-        if (!CoinItem.isCoin(droppedItem)) {
-            plugin.debug("CoinListener.onPlayerDropItem() - Item is not a coin, allowing normal drop");
-            return; // Not a coin, let it drop normally
-        }
-        
-        plugin.debug("CoinListener.onPlayerDropItem() - Coin detected, will replace with custom ItemDisplay entity");
-        
-        // Schedule the entity swap for the next tick.
-        // We can't remove the Item entity during the event - Bukkit will restore the item to inventory.
-        // By scheduling for next tick, the event completes normally, then we swap entities.
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            // Check if the item entity still exists (might have been picked up already)
-            if (!droppedItemEntity.isValid() || droppedItemEntity.isDead()) {
-                plugin.debug("CoinListener.onPlayerDropItem() - Item entity no longer valid, skipping");
-                return;
-            }
-            
-            // Get the current location of the dropped item
-            org.bukkit.Location dropLocation = droppedItemEntity.getLocation();
-            plugin.debug("CoinListener.onPlayerDropItem() - Drop location: {}", dropLocation);
-            
-            // Remove the vanilla Item entity - we'll replace it with ItemDisplay
-            droppedItemEntity.remove();
-            plugin.debug("CoinListener.onPlayerDropItem() - Removed vanilla Item entity");
-            
-            // Create a custom ItemDisplay entity for the coin
-            org.bukkit.entity.ItemDisplay coinDisplay = CoinEntityManager.createCoinDisplay(
-                dropLocation,
-                droppedItem
-            );
-            
-            if (coinDisplay != null) {
-                plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay created successfully");
-            } else {
-                plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay creation failed, falling back to normal drop");
-                // Fallback: if display creation fails, drop normally
-                player.getWorld().dropItemNaturally(dropLocation, droppedItem);
-            }
-        });
-    }
-    
-    /**
-     * Handles when a player picks up an item.
-     * If the item is a coin display entity, converts it back to an ItemStack.
-     * 
-     * @param event The EntityPickupItemEvent
-     */
-    @EventHandler(priority = EventPriority.HIGH)
-    public void onEntityPickupItem(EntityPickupItemEvent event) {
-        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
-        
-        // Only handle player pickups
-        if (!(event.getEntity() instanceof Player)) {
-            return;
-        }
-        
-        Player player = (Player) event.getEntity();
-        Item itemEntity = event.getItem();
-        ItemStack item = itemEntity.getItemStack();
-        
-        plugin.debug("CoinListener.onEntityPickupItem() - player={}, item={}, amount={}", 
-            player.getName(), item.getType(), item.getAmount());
-        
-        // Check if it's a coin
-        if (CoinItem.isCoin(item)) {
-            plugin.debug("CoinListener.onEntityPickupItem() - Coin detected, allowing normal pickup");
-            // For standard Item entities with coins, let them pick up normally
-            // The custom display entities will be handled separately
-            return;
-        }
-        
-        plugin.debug("CoinListener.onEntityPickupItem() - Item is not a coin, allowing normal pickup");
-    }
-    
-    /**
-     * Handles when a player interacts with an entity (right-click).
-     * If the entity is a coin ItemDisplay, converts it to an ItemStack and gives it to the player.
-     * 
-     * @param event The PlayerInteractEntityEvent
-     */
-    @EventHandler(priority = EventPriority.HIGH)
-    public void onPlayerInteractEntity(PlayerInteractEntityEvent event) {
-        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
-        
-        if (!(event.getRightClicked() instanceof ItemDisplay)) {
-            return;
-        }
-        
-        ItemDisplay display = (ItemDisplay) event.getRightClicked();
-        Player player = event.getPlayer();
-        
-        plugin.debug("CoinListener.onPlayerInteractEntity() - player={}, entityType=ItemDisplay, location={}", 
-            player.getName(), display.getLocation());
-        
-        // Check if this is a coin display
-        ItemStack coin = CoinEntityManager.getCoinFromDisplay(display);
-        if (coin == null) {
-            plugin.debug("CoinListener.onPlayerInteractEntity() - ItemDisplay is not a coin display");
-            return; // Not a coin display
-        }
-        
-        plugin.debug("CoinListener.onPlayerInteractEntity() - Coin display detected, amount={}, removing entity and giving to player", 
-            coin.getAmount());
-        
-        // Remove the display entity
-        display.remove();
-        
-        // Give the coin to the player
-        CoinEntityManager.giveCoinToPlayer(player, coin);
-        
-        // Cancel the event to prevent other handlers
-        event.setCancelled(true);
-    }
     
     /**
      * Handles when a player joins the server.
@@ -186,12 +42,11 @@ public class CoinListener implements Listener {
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
-        
-        plugin.debug("CoinListener.onPlayerJoin() - player={}", player.getName());
-        
         if (plugin == null) {
             return;
         }
+        
+        plugin.debug("CoinListener.onPlayerJoin() - player={}", player.getName());
         
         // Reset retry tracking for this player
         retryCounts.remove(player.getUniqueId());

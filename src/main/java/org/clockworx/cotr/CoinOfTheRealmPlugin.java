@@ -3,11 +3,7 @@ package org.clockworx.cotr;
 import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
-import org.bukkit.entity.ItemDisplay;
-import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitRunnable;
 import org.clockworx.cotr.bank.AccountMembershipManager;
 import org.clockworx.cotr.bank.BankManager;
 import org.clockworx.cotr.bank.impl.CotrBankController;
@@ -16,7 +12,6 @@ import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
 import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.datapack.DataPackManager;
-import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.listener.CoinListener;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -100,10 +95,6 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         
         // Register commands
         registerCommands();
-        
-        // Start a task to handle proximity-based pickup for coin displays
-        // This allows players to pick up coins by walking near them
-        startCoinPickupTask();
         
         getLogger().info("Coin of the Realm plugin has been enabled!");
         getLogger().info("CustomModelData: " + configManager.getCoinConfig().getCustomModelData());
@@ -259,40 +250,6 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         getLogger().info("Registered /cotr command with Paper command system");
     }
     
-    /**
-     * Starts a repeating task that checks for players near coin displays
-     * and automatically picks them up (similar to standard item pickup).
-     */
-    private void startCoinPickupTask() {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                // Check all online players
-                for (Player player : getServer().getOnlinePlayers()) {
-                    // Check for nearby ItemDisplay entities
-                    for (org.bukkit.entity.Entity entity : player.getNearbyEntities(1.5, 1.5, 1.5)) {
-                        if (!(entity instanceof ItemDisplay)) {
-                            continue;
-                        }
-                        
-                        ItemDisplay display = (ItemDisplay) entity;
-                        ItemStack coin = CoinEntityManager.getCoinFromDisplay(display);
-                        
-                        if (coin != null) {
-                            // Remove the display
-                            display.remove();
-                            
-                            // Give the coin to the player
-                            CoinEntityManager.giveCoinToPlayer(player, coin);
-                            
-                            // Only pick up one coin per tick to avoid lag
-                            break;
-                        }
-                    }
-                }
-            }
-        }.runTaskTimer(this, 0L, 5L); // Run every 5 ticks (0.25 seconds)
-    }
     
     @Override
     public void onDisable() {
