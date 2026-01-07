@@ -55,7 +55,8 @@ public class CoinListener implements Listener {
     public void onPlayerDropItem(PlayerDropItemEvent event) {
         CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
         Player player = event.getPlayer();
-        ItemStack droppedItem = event.getItemDrop().getItemStack();
+        Item droppedItemEntity = event.getItemDrop();
+        ItemStack droppedItem = droppedItemEntity.getItemStack();
         
         plugin.debug("CoinListener.onPlayerDropItem() - player={}, item={}, amount={}", 
             player.getName(), droppedItem.getType(), droppedItem.getAmount());
@@ -66,17 +67,19 @@ public class CoinListener implements Listener {
             return; // Not a coin, let it drop normally
         }
         
-        plugin.debug("CoinListener.onPlayerDropItem() - Coin detected, creating custom ItemDisplay entity");
+        plugin.debug("CoinListener.onPlayerDropItem() - Coin detected, replacing with custom ItemDisplay entity");
         
-        // Cancel the default drop (we'll create our own entity)
-        event.setCancelled(true);
+        // Don't cancel the event - the item has already been removed from inventory.
+        // Instead, remove the vanilla Item entity and create our ItemDisplay in its place.
+        // This avoids duplication (cancelling would return item to inventory).
         
-        // Get the drop location
-        org.bukkit.Location dropLocation = player.getLocation().add(
-            player.getLocation().getDirection().multiply(0.5)
-        );
-        dropLocation.setY(dropLocation.getY() + player.getEyeHeight() - 0.3);
+        // Get the location of the dropped item entity
+        org.bukkit.Location dropLocation = droppedItemEntity.getLocation();
         plugin.debug("CoinListener.onPlayerDropItem() - Drop location: {}", dropLocation);
+        
+        // Remove the vanilla Item entity - we'll replace it with ItemDisplay
+        droppedItemEntity.remove();
+        plugin.debug("CoinListener.onPlayerDropItem() - Removed vanilla Item entity");
         
         // Create a custom ItemDisplay entity for the coin
         org.bukkit.entity.ItemDisplay coinDisplay = CoinEntityManager.createCoinDisplay(

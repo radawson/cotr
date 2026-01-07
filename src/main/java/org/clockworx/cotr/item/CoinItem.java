@@ -111,12 +111,17 @@ public class CoinItem {
         // Set item model for resource pack texture (newer Paper API)
         NamespacedKey modelKey = coinConfig.getItemModelKey();
         if (modelKey != null) {
-            plugin.debug("CoinItem.createCoin() - Setting item model: {}", modelKey);
+            plugin.debug("CoinItem.createCoin() - Setting item model: {} (namespace='{}', key='{}')", 
+                modelKey, modelKey.getNamespace(), modelKey.getKey());
+            plugin.debug("CoinItem.createCoin() - Resource pack should have: assets/{}/items/{}.json", 
+                modelKey.getNamespace(), modelKey.getKey());
             meta.setItemModel(modelKey);
+            plugin.getLogger().info("Coin item model set to: " + modelKey);
         } else {
             // Fallback to CustomModelData if model not specified
             int customModelData = coinConfig.getCustomModelData();
-            plugin.debug("CoinItem.createCoin() - Setting CustomModelData: {}", customModelData);
+            plugin.debug("CoinItem.createCoin() - No item model configured, falling back to CustomModelData: {}", customModelData);
+            plugin.getLogger().warning("No item model configured for coin - using legacy CustomModelData: " + customModelData);
             meta.setCustomModelData(customModelData);
         }
 

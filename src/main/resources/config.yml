@@ -18,7 +18,7 @@ resource-pack:
   # SHA-1 hash of the resource pack (optional, but recommended for security)
   # Leave empty to skip hash verification
   # You can get the hash using: sha1sum cotr-resources.zip
-  hash: "3a2ba2a79151c1e5fee471c4e31450a8bd270cdb"
+  hash: "410972b4f033bebcee8bb11504b8b31d31747874"
   
   # Whether to prompt players to accept the resource pack
   # If false, resource pack will be applied automatically (may require server.properties setting)
