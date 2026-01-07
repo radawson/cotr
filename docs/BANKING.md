@@ -150,8 +150,16 @@ Lists all accounts you have access to.
 ### `/cotr account members <account>`
 Shows all members of an account.
 
-### `/cotr account add <account> <player>`
-Adds a player to an account (as MEMBER role).
+### `/cotr account add <account> <player> [role]`
+Adds a player to an account with the specified role.
+
+**Examples**:
+- `/cotr account add savings Alice` - Adds Alice as MEMBER (default)
+- `/cotr account add treasury Bob OWNER` - Adds Bob as OWNER
+- `/cotr account add donations Charlie CONTRIBUTOR` - Adds Charlie as CONTRIBUTOR (can only deposit)
+- `/cotr account add limited Dave USER` - Adds Dave as USER (with daily limits)
+
+**Available roles**: OWNER, MEMBER, USER, CONTRIBUTOR, VIEWER
 
 ### `/cotr account remove <account> <player>`
 Removes a player from an account.
@@ -167,9 +175,33 @@ When a player first uses banking features, a default account is automatically cr
 
 ### Account Roles
 
-- **OWNER**: Full control (deposit, withdraw, manage members, delete account)
-- **ADMIN**: Can manage members and perform transactions, but cannot delete account
-- **MEMBER**: Can deposit, withdraw, and view balance, but cannot manage members
+The banking system supports five distinct roles with varying permission levels:
+
+- **OWNER**: Full control over the account
+  - Can: deposit, withdraw, transfer, view balance
+  - Can: add/remove members, delete account
+  - Full administrative access
+
+- **MEMBER**: Full transaction access without management
+  - Can: deposit, withdraw, transfer, view balance
+  - Cannot: manage members, delete account
+  - Perfect for trusted account users
+
+- **USER**: Limited transaction access with daily limits
+  - Can: deposit, withdraw (subject to daily limits), view balance
+  - Cannot: manage members, delete account
+  - Daily limits: Configurable per account or globally (default: 1000 coins/day)
+  - Perfect for accounts where you want to limit transaction amounts
+
+- **CONTRIBUTOR**: Deposit-only access (unlimited)
+  - Can: deposit (unlimited), view balance
+  - Cannot: withdraw, manage members, delete account
+  - Perfect for: guild dues, donation accounts, kingdom contributions, or any scenario where players should contribute but not withdraw
+
+- **VIEWER**: Read-only access
+  - Can: view balance only
+  - Cannot: deposit, withdraw, manage members, delete account
+  - Reserved for future use cases requiring read-only access
 
 ### Shared Accounts
 
@@ -284,6 +316,28 @@ CREATE TABLE {prefix}account_memberships (
 CREATE INDEX idx_{prefix}account_memberships_account ON {prefix}account_memberships(account_name);
 CREATE INDEX idx_{prefix}account_memberships_player ON {prefix}account_memberships(player_uuid);
 ```
+
+### Daily Transactions Table
+
+**Table Name**: `{prefix}daily_transactions` (e.g., `daily_transactions` or `cotr_daily_transactions`)
+
+This table tracks daily transaction totals for USER role accounts to enforce daily limits.
+
+```sql
+CREATE TABLE {prefix}daily_transactions (
+    account_name VARCHAR(255) NOT NULL,
+    player_uuid VARCHAR(36) NOT NULL,
+    date VARCHAR(10) NOT NULL,
+    deposit_total INT NOT NULL DEFAULT 0,
+    withdraw_total INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_name, player_uuid, date)
+);
+
+CREATE INDEX idx_{prefix}daily_transactions_account_date ON {prefix}daily_transactions(account_name, date);
+CREATE INDEX idx_{prefix}daily_transactions_player_date ON {prefix}daily_transactions(player_uuid, date);
+```
+
+**Note**: The `date` column uses YYYY-MM-DD format (e.g., "2024-01-15").
 
 ### Schema Version Table
 

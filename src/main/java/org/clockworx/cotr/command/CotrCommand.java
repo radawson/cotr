@@ -706,7 +706,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             try {
                 role = AccountRole.valueOf(args[4].toUpperCase());
             } catch (IllegalArgumentException e) {
-                player.sendMessage(Component.text("Invalid role. Use OWNER, MEMBER, or VIEWER.", NamedTextColor.RED));
+                player.sendMessage(Component.text("Invalid role. Use OWNER, MEMBER, USER, CONTRIBUTOR, or VIEWER.", NamedTextColor.RED));
                 return true;
             }
         }

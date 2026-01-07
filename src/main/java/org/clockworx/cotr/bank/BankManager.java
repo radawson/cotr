@@ -420,7 +420,7 @@ public class BankManager {
                 return CompletableFuture.completedFuture(false);
             }
             
-            // Check access
+            // Check access and deposit permission
             boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
             plugin.debug("BankManager.deposit() - Access check: {}", hasAccess);
             
@@ -429,45 +429,88 @@ public class BankManager {
                 return CompletableFuture.completedFuture(false);
             }
             
-            // Count coins in inventory
-            int coinsInInventory = countCoinsInInventory(player);
-            plugin.debug("BankManager.deposit() - Coins in inventory: {}, required: {}", coinsInInventory, amount);
-            
-            if (coinsInInventory < amount) {
-                plugin.debug("BankManager.deposit() - Insufficient coins in inventory");
+            // Check if role can deposit
+            AccountRole role = membershipManager.getRole(player.getUniqueId(), accName);
+            if (role == null || !role.canDeposit()) {
+                plugin.debug("BankManager.deposit() - Player {} role {} cannot deposit to account '{}'", 
+                    player.getName(), role != null ? role.name() : "null", accName);
                 return CompletableFuture.completedFuture(false);
             }
             
-            // Remove coins from inventory
-            plugin.debug("BankManager.deposit() - Removing {} coins from inventory", amount);
-            removeCoinsFromInventory(player, amount);
-            
-            // Get bank and deposit
-            return getAccount(player, accName)
-                .thenCompose(bank -> {
-                    if (bank == null) {
-                        plugin.debug("BankManager.deposit() - Bank is null, refunding coins");
-                        // Refund coins if bank access failed
-                        giveCoinsToPlayer(player, amount);
+            // Check daily limits for USER role
+            if (role == AccountRole.USER) {
+                String today = java.time.LocalDate.now().toString(); // YYYY-MM-DD format
+                CompletableFuture<Boolean> limitCheck = checkDailyDepositLimit(accName, player.getUniqueId(), today, amount);
+                return limitCheck.thenCompose(withinLimit -> {
+                    if (!withinLimit) {
+                        plugin.debug("BankManager.deposit() - Daily deposit limit exceeded for USER role");
                         return CompletableFuture.completedFuture(false);
                     }
-                    
-                    // Convert int to BigDecimal for API call
-                    BigDecimal depositAmount = BigDecimal.valueOf(amount);
-                    plugin.debug("BankManager.deposit() - Depositing {} (BigDecimal) to bank", depositAmount);
-                    BigDecimal newBalance = BankReflectionHelper.deposit(bank, depositAmount);
-                    
-                    if (newBalance == null) {
-                        plugin.debug("BankManager.deposit() - Deposit returned null, refunding coins");
-                        // Refund coins if deposit failed
-                        giveCoinsToPlayer(player, amount);
-                        return CompletableFuture.completedFuture(false);
-                    }
-                    
-                    plugin.debug("BankManager.deposit() - Deposit successful, new balance: {}", newBalance);
-                    return CompletableFuture.completedFuture(true);
+                    return proceedWithDeposit(player, accName, amount, role, today);
                 });
+            }
+            
+            // For other roles (OWNER, MEMBER, CONTRIBUTOR), proceed without daily limits
+            return proceedWithDeposit(player, accName, amount, role, null);
         });
+    }
+    
+    /**
+     * Proceeds with the deposit operation after permission checks.
+     * 
+     * @param player The player depositing
+     * @param accName The account name
+     * @param amount The amount to deposit
+     * @param role The player's role
+     * @param date The date string for daily limit tracking (null if not needed)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    private CompletableFuture<Boolean> proceedWithDeposit(@NotNull Player player, @NotNull String accName, 
+                                                           int amount, @NotNull AccountRole role, @Nullable String date) {
+        // Count coins in inventory
+        int coinsInInventory = countCoinsInInventory(player);
+        plugin.debug("BankManager.proceedWithDeposit() - Coins in inventory: {}, required: {}", coinsInInventory, amount);
+        
+        if (coinsInInventory < amount) {
+            plugin.debug("BankManager.proceedWithDeposit() - Insufficient coins in inventory");
+            return CompletableFuture.completedFuture(false);
+        }
+        
+        // Remove coins from inventory
+        plugin.debug("BankManager.proceedWithDeposit() - Removing {} coins from inventory", amount);
+        removeCoinsFromInventory(player, amount);
+        
+        // Get bank and deposit
+        return getAccount(player, accName)
+            .thenCompose(bank -> {
+                if (bank == null) {
+                    plugin.debug("BankManager.proceedWithDeposit() - Bank is null, refunding coins");
+                    // Refund coins if bank access failed
+                    giveCoinsToPlayer(player, amount);
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                // Convert int to BigDecimal for API call
+                BigDecimal depositAmount = BigDecimal.valueOf(amount);
+                plugin.debug("BankManager.proceedWithDeposit() - Depositing {} (BigDecimal) to bank", depositAmount);
+                BigDecimal newBalance = BankReflectionHelper.deposit(bank, depositAmount);
+                
+                if (newBalance == null) {
+                    plugin.debug("BankManager.proceedWithDeposit() - Deposit returned null, refunding coins");
+                    // Refund coins if deposit failed
+                    giveCoinsToPlayer(player, amount);
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                // Update daily transaction totals for USER role
+                if (role == AccountRole.USER && date != null) {
+                    updateDailyDeposit(accName, player.getUniqueId(), date, amount);
+                }
+                
+                plugin.debug("BankManager.proceedWithDeposit() - Deposit successful, new balance: {}", newBalance);
+                return CompletableFuture.completedFuture(true);
+            });
     }
     
     /**
@@ -500,7 +543,7 @@ public class BankManager {
                 return CompletableFuture.completedFuture(false);
             }
             
-            // Check access
+            // Check access and withdraw permission
             boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
             plugin.debug("BankManager.withdraw() - Access check: {}", hasAccess);
             
@@ -509,40 +552,84 @@ public class BankManager {
                 return CompletableFuture.completedFuture(false);
             }
             
-            // Get bank and check balance
-            return getAccount(player, accName)
-                .thenCompose(bank -> {
-                    if (bank == null) {
-                        plugin.debug("BankManager.withdraw() - Bank is null, returning false");
+            // Check if role can withdraw
+            AccountRole role = membershipManager.getRole(player.getUniqueId(), accName);
+            if (role == null || !role.canWithdraw()) {
+                plugin.debug("BankManager.withdraw() - Player {} role {} cannot withdraw from account '{}'", 
+                    player.getName(), role != null ? role.name() : "null", accName);
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            // Check daily limits for USER role
+            if (role == AccountRole.USER) {
+                String today = java.time.LocalDate.now().toString(); // YYYY-MM-DD format
+                CompletableFuture<Boolean> limitCheck = checkDailyWithdrawLimit(accName, player.getUniqueId(), today, amount);
+                return limitCheck.thenCompose(withinLimit -> {
+                    if (!withinLimit) {
+                        plugin.debug("BankManager.withdraw() - Daily withdrawal limit exceeded for USER role");
                         return CompletableFuture.completedFuture(false);
                     }
-                    
-                    // Convert BigDecimal balance to int for comparison
-                    BigDecimal balance = BankReflectionHelper.getBalance(bank);
-                    int balanceInt = balance != null ? balance.intValue() : 0;
-                    plugin.debug("BankManager.withdraw() - Current balance: {} (BigDecimal: {})", balanceInt, balance);
-                    
-                    if (balanceInt < amount) {
-                        plugin.debug("BankManager.withdraw() - Insufficient balance: {} < {}", balanceInt, amount);
-                        return CompletableFuture.completedFuture(false);
-                    }
-                    
-                    // Convert int to BigDecimal for API call
-                    BigDecimal withdrawAmount = BigDecimal.valueOf(amount);
-                    plugin.debug("BankManager.withdraw() - Withdrawing {} (BigDecimal) from bank", withdrawAmount);
-                    BigDecimal newBalance = BankReflectionHelper.withdraw(bank, withdrawAmount);
-                    
-                    if (newBalance != null) {
-                        plugin.debug("BankManager.withdraw() - Withdrawal successful, new balance: {}, giving {} coins to player", newBalance, amount);
-                        // Give coins to player
-                        giveCoinsToPlayer(player, amount);
-                        return CompletableFuture.completedFuture(true);
-                    }
-                    
-                    plugin.debug("BankManager.withdraw() - Withdrawal returned null, returning false");
-                    return CompletableFuture.completedFuture(false);
+                    return proceedWithWithdraw(player, accName, amount, role, today);
                 });
+            }
+            
+            // For other roles (OWNER, MEMBER), proceed without daily limits
+            return proceedWithWithdraw(player, accName, amount, role, null);
         });
+    }
+    
+    /**
+     * Proceeds with the withdrawal operation after permission checks.
+     * 
+     * @param player The player withdrawing
+     * @param accName The account name
+     * @param amount The amount to withdraw
+     * @param role The player's role
+     * @param date The date string for daily limit tracking (null if not needed)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    private CompletableFuture<Boolean> proceedWithWithdraw(@NotNull Player player, @NotNull String accName, 
+                                                           int amount, @NotNull AccountRole role, @Nullable String date) {
+        // Get bank and check balance
+        return getAccount(player, accName)
+            .thenCompose(bank -> {
+                if (bank == null) {
+                    plugin.debug("BankManager.proceedWithWithdraw() - Bank is null, returning false");
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                // Convert BigDecimal balance to int for comparison
+                BigDecimal balance = BankReflectionHelper.getBalance(bank);
+                int balanceInt = balance != null ? balance.intValue() : 0;
+                plugin.debug("BankManager.proceedWithWithdraw() - Current balance: {} (BigDecimal: {})", balanceInt, balance);
+                
+                if (balanceInt < amount) {
+                    plugin.debug("BankManager.proceedWithWithdraw() - Insufficient balance: {} < {}", balanceInt, amount);
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                // Convert int to BigDecimal for API call
+                BigDecimal withdrawAmount = BigDecimal.valueOf(amount);
+                plugin.debug("BankManager.proceedWithWithdraw() - Withdrawing {} (BigDecimal) from bank", withdrawAmount);
+                BigDecimal newBalance = BankReflectionHelper.withdraw(bank, withdrawAmount);
+                
+                if (newBalance != null) {
+                    plugin.debug("BankManager.proceedWithWithdraw() - Withdrawal successful, new balance: {}, giving {} coins to player", newBalance, amount);
+                    
+                    // Update daily transaction totals for USER role
+                    if (role == AccountRole.USER && date != null) {
+                        updateDailyWithdraw(accName, player.getUniqueId(), date, amount);
+                    }
+                    
+                    // Give coins to player
+                    giveCoinsToPlayer(player, amount);
+                    return CompletableFuture.completedFuture(true);
+                }
+                
+                plugin.debug("BankManager.proceedWithWithdraw() - Withdrawal returned null, returning false");
+                return CompletableFuture.completedFuture(false);
+            });
     }
     
     /**
@@ -779,5 +866,135 @@ public class BankManager {
             
             amount -= stackSize;
         }
+    }
+    
+    // ========== Daily Transaction Limits Methods ==========
+    
+    /**
+     * Default daily deposit limit for USER role (in coins).
+     * TODO: Make this configurable per account or globally via config.yml
+     */
+    private static final int DEFAULT_DAILY_DEPOSIT_LIMIT = 1000;
+    
+    /**
+     * Default daily withdrawal limit for USER role (in coins).
+     * TODO: Make this configurable per account or globally via config.yml
+     */
+    private static final int DEFAULT_DAILY_WITHDRAW_LIMIT = 1000;
+    
+    /**
+     * Checks if a deposit would exceed the daily limit for a USER role.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @param amount The deposit amount to check
+     * @return A CompletableFuture that completes with true if within limit, false if exceeded
+     */
+    @NotNull
+    private CompletableFuture<Boolean> checkDailyDepositLimit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
+                                                               @NotNull String date, int amount) {
+        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        if (storage == null) {
+            plugin.debug("BankManager.checkDailyDepositLimit() - Storage not available, allowing transaction");
+            return CompletableFuture.completedFuture(true);
+        }
+        
+        return storage.getDailyTransactions(accountName, playerUuid, date)
+            .thenApply(recordOpt -> {
+                int currentTotal = recordOpt.map(org.clockworx.cotr.bank.storage.DatabaseBankStorage.DailyTransactionRecord::getDepositTotal)
+                    .orElse(0);
+                int newTotal = currentTotal + amount;
+                boolean withinLimit = newTotal <= DEFAULT_DAILY_DEPOSIT_LIMIT;
+                
+                plugin.debug("BankManager.checkDailyDepositLimit() - Current: {}, Adding: {}, New: {}, Limit: {}, Within: {}", 
+                    currentTotal, amount, newTotal, DEFAULT_DAILY_DEPOSIT_LIMIT, withinLimit);
+                
+                return withinLimit;
+            });
+    }
+    
+    /**
+     * Checks if a withdrawal would exceed the daily limit for a USER role.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @param amount The withdrawal amount to check
+     * @return A CompletableFuture that completes with true if within limit, false if exceeded
+     */
+    @NotNull
+    private CompletableFuture<Boolean> checkDailyWithdrawLimit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
+                                                                @NotNull String date, int amount) {
+        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        if (storage == null) {
+            plugin.debug("BankManager.checkDailyWithdrawLimit() - Storage not available, allowing transaction");
+            return CompletableFuture.completedFuture(true);
+        }
+        
+        return storage.getDailyTransactions(accountName, playerUuid, date)
+            .thenApply(recordOpt -> {
+                int currentTotal = recordOpt.map(org.clockworx.cotr.bank.storage.DatabaseBankStorage.DailyTransactionRecord::getWithdrawTotal)
+                    .orElse(0);
+                int newTotal = currentTotal + amount;
+                boolean withinLimit = newTotal <= DEFAULT_DAILY_WITHDRAW_LIMIT;
+                
+                plugin.debug("BankManager.checkDailyWithdrawLimit() - Current: {}, Adding: {}, New: {}, Limit: {}, Within: {}", 
+                    currentTotal, amount, newTotal, DEFAULT_DAILY_WITHDRAW_LIMIT, withinLimit);
+                
+                return withinLimit;
+            });
+    }
+    
+    /**
+     * Updates the daily deposit total for a USER role after a successful deposit.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @param amount The deposit amount
+     */
+    private void updateDailyDeposit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
+                                    @NotNull String date, int amount) {
+        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        if (storage == null) {
+            plugin.debug("BankManager.updateDailyDeposit() - Storage not available, skipping update");
+            return;
+        }
+        
+        storage.updateDailyTransactions(accountName, playerUuid, date, amount, 0)
+            .thenAccept(success -> {
+                if (success) {
+                    plugin.debug("BankManager.updateDailyDeposit() - Updated daily deposit total: +{}", amount);
+                } else {
+                    plugin.getLogger().warning("Failed to update daily deposit total for account: " + accountName);
+                }
+            });
+    }
+    
+    /**
+     * Updates the daily withdrawal total for a USER role after a successful withdrawal.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @param amount The withdrawal amount
+     */
+    private void updateDailyWithdraw(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
+                                     @NotNull String date, int amount) {
+        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        if (storage == null) {
+            plugin.debug("BankManager.updateDailyWithdraw() - Storage not available, skipping update");
+            return;
+        }
+        
+        storage.updateDailyTransactions(accountName, playerUuid, date, 0, amount)
+            .thenAccept(success -> {
+                if (success) {
+                    plugin.debug("BankManager.updateDailyWithdraw() - Updated daily withdrawal total: +{}", amount);
+                } else {
+                    plugin.getLogger().warning("Failed to update daily withdrawal total for account: " + accountName);
+                }
+            });
     }
 }

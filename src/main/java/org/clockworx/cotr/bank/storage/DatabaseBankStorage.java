@@ -31,7 +31,7 @@ public class DatabaseBankStorage implements BankStorage {
     private final String password;
     private HikariDataSource dataSource;
     private ExecutorService executorService;
-    private static final int CURRENT_SCHEMA_VERSION = 1;
+    private static final int CURRENT_SCHEMA_VERSION = 2;
     
     /**
      * Creates a new DatabaseBankStorage.
@@ -156,6 +156,7 @@ public class DatabaseBankStorage implements BankStorage {
         
         String banksTable = getTableName("banks");
         String membershipsTable = getTableName("account_memberships");
+        String dailyTransactionsTable = getTableName("daily_transactions");
         String schemaVersionTable = getTableName("schema_version");
         
         String createTableSql;
@@ -182,8 +183,19 @@ public class DatabaseBankStorage implements BankStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_%s_account ON %s(account_name);
                 CREATE INDEX IF NOT EXISTS idx_%s_player ON %s(player_uuid);
+                CREATE TABLE IF NOT EXISTS %s (
+                    account_name VARCHAR(255) NOT NULL,
+                    player_uuid VARCHAR(36) NOT NULL,
+                    date VARCHAR(10) NOT NULL,
+                    deposit_total INT NOT NULL DEFAULT 0,
+                    withdraw_total INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (account_name, player_uuid, date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_%s_account_date ON %s(account_name, date);
+                CREATE INDEX IF NOT EXISTS idx_%s_player_date ON %s(player_uuid, date);
                 """, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable,
-                membershipsTable, membershipsTable, membershipsTable, membershipsTable, membershipsTable);
+                membershipsTable, membershipsTable, membershipsTable, membershipsTable, membershipsTable,
+                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
         } else {
             // MySQL
             createTableSql = String.format("""
@@ -208,7 +220,18 @@ public class DatabaseBankStorage implements BankStorage {
                     INDEX idx_%s_account (account_name),
                     INDEX idx_%s_player (player_uuid)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                """, banksTable, banksTable, banksTable, banksTable, membershipsTable, membershipsTable, membershipsTable);
+                CREATE TABLE IF NOT EXISTS %s (
+                    account_name VARCHAR(255) NOT NULL,
+                    player_uuid VARCHAR(36) NOT NULL,
+                    date VARCHAR(10) NOT NULL,
+                    deposit_total INT NOT NULL DEFAULT 0,
+                    withdraw_total INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (account_name, player_uuid, date),
+                    INDEX idx_%s_account_date (account_name, date),
+                    INDEX idx_%s_player_date (player_uuid, date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """, banksTable, banksTable, banksTable, banksTable, membershipsTable, membershipsTable, membershipsTable,
+                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
         }
         
         try (Connection conn = dataSource.getConnection();
@@ -246,27 +269,98 @@ public class DatabaseBankStorage implements BankStorage {
     }
     
     /**
-     * Ensures the schema version is set correctly.
+     * Ensures the schema version is set correctly and runs migrations if needed.
      */
     private void ensureSchemaVersion() throws SQLException {
         String schemaVersionTable = getTableName("schema_version");
         try (Connection conn = dataSource.getConnection()) {
-            // Check if version record exists
+            // Get current schema version
+            int currentVersion = 0;
             try (PreparedStatement stmt = conn.prepareStatement(
-                    "SELECT version FROM " + schemaVersionTable + " WHERE version = ?")) {
-                stmt.setInt(1, CURRENT_SCHEMA_VERSION);
+                    "SELECT MAX(version) as max_version FROM " + schemaVersionTable)) {
                 try (ResultSet rs = stmt.executeQuery()) {
-                    if (!rs.next()) {
-                        // Insert new version
-                        try (PreparedStatement insertStmt = conn.prepareStatement(
-                                "INSERT INTO " + schemaVersionTable + " (version, applied_at) VALUES (?, ?)")) {
-                            insertStmt.setInt(1, CURRENT_SCHEMA_VERSION);
-                            insertStmt.setLong(2, System.currentTimeMillis());
-                            insertStmt.executeUpdate();
-                            plugin.debug("DatabaseBankStorage.ensureSchemaVersion() - Schema version {} recorded", CURRENT_SCHEMA_VERSION);
-                        }
+                    if (rs.next() && !rs.wasNull()) {
+                        currentVersion = rs.getInt("max_version");
                     }
                 }
+            }
+            
+            plugin.debug("DatabaseBankStorage.ensureSchemaVersion() - Current version: {}, Target version: {}", 
+                currentVersion, CURRENT_SCHEMA_VERSION);
+            
+            // Run migrations if needed
+            if (currentVersion < CURRENT_SCHEMA_VERSION) {
+                runMigrations(conn, currentVersion, CURRENT_SCHEMA_VERSION);
+            }
+            
+            // Ensure current version is recorded
+            if (currentVersion < CURRENT_SCHEMA_VERSION) {
+                try (PreparedStatement insertStmt = conn.prepareStatement(
+                        "INSERT INTO " + schemaVersionTable + " (version, applied_at) VALUES (?, ?)")) {
+                    insertStmt.setInt(1, CURRENT_SCHEMA_VERSION);
+                    insertStmt.setLong(2, System.currentTimeMillis());
+                    insertStmt.executeUpdate();
+                    plugin.debug("DatabaseBankStorage.ensureSchemaVersion() - Schema version {} recorded", CURRENT_SCHEMA_VERSION);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Runs database migrations from one version to another.
+     * 
+     * @param conn The database connection
+     * @param fromVersion The current schema version
+     * @param toVersion The target schema version
+     */
+    private void runMigrations(Connection conn, int fromVersion, int toVersion) throws SQLException {
+        plugin.debug("DatabaseBankStorage.runMigrations() - Migrating from version {} to {}", fromVersion, toVersion);
+        
+        // Migration from version 1 to 2: Add daily_transactions table
+        if (fromVersion < 2 && toVersion >= 2) {
+            plugin.getLogger().info("Running database migration: version 1 -> 2 (adding daily_transactions table)");
+            
+            String dailyTransactionsTable = getTableName("daily_transactions");
+            String createTableSql;
+            
+            if ("sqlite".equals(databaseType)) {
+                createTableSql = String.format("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                        account_name VARCHAR(255) NOT NULL,
+                        player_uuid VARCHAR(36) NOT NULL,
+                        date VARCHAR(10) NOT NULL,
+                        deposit_total INT NOT NULL DEFAULT 0,
+                        withdraw_total INT NOT NULL DEFAULT 0,
+                        PRIMARY KEY (account_name, player_uuid, date)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_%s_account_date ON %s(account_name, date);
+                    CREATE INDEX IF NOT EXISTS idx_%s_player_date ON %s(player_uuid, date);
+                    """, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, 
+                    dailyTransactionsTable, dailyTransactionsTable);
+            } else {
+                createTableSql = String.format("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                        account_name VARCHAR(255) NOT NULL,
+                        player_uuid VARCHAR(36) NOT NULL,
+                        date VARCHAR(10) NOT NULL,
+                        deposit_total INT NOT NULL DEFAULT 0,
+                        withdraw_total INT NOT NULL DEFAULT 0,
+                        PRIMARY KEY (account_name, player_uuid, date),
+                        INDEX idx_%s_account_date (account_name, date),
+                        INDEX idx_%s_player_date (player_uuid, date)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
+            }
+            
+            try (Statement stmt = conn.createStatement()) {
+                String[] statements = createTableSql.split(";");
+                for (String sql : statements) {
+                    sql = sql.trim();
+                    if (!sql.isEmpty()) {
+                        stmt.execute(sql);
+                    }
+                }
+                plugin.getLogger().info("Migration 1->2 completed successfully");
             }
         }
     }
@@ -879,6 +973,159 @@ public class DatabaseBankStorage implements BankStorage {
                 throw new RuntimeException("Failed to update membership role", e);
             }
         }, executorService);
+    }
+    
+    // ========== Daily Transaction Limits Methods ==========
+    
+    /**
+     * Gets the daily transaction totals for a player and account on a specific date.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @return A CompletableFuture that completes with DailyTransactionRecord, or empty if not found
+     */
+    @NotNull
+    public CompletableFuture<Optional<DailyTransactionRecord>> getDailyTransactions(@NotNull String accountName,
+                                                                                     @NotNull UUID playerUuid,
+                                                                                     @NotNull String date) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.getDailyTransactions() - account={}, player={}, date={}", 
+                accountName, playerUuid, date);
+            
+            String dailyTransactionsTable = getTableName("daily_transactions");
+            String sql = "SELECT account_name, player_uuid, date, deposit_total, withdraw_total FROM " + 
+                dailyTransactionsTable + " WHERE account_name = ? AND player_uuid = ? AND date = ?";
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                
+                stmt.setString(1, accountName);
+                stmt.setString(2, playerUuid.toString());
+                stmt.setString(3, date);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        DailyTransactionRecord record = new DailyTransactionRecord(
+                            rs.getString("account_name"),
+                            UUID.fromString(rs.getString("player_uuid")),
+                            rs.getString("date"),
+                            rs.getInt("deposit_total"),
+                            rs.getInt("withdraw_total")
+                        );
+                        plugin.debug("DatabaseBankStorage.getDailyTransactions() - Found record: deposit={}, withdraw={}", 
+                            record.getDepositTotal(), record.getWithdrawTotal());
+                        return Optional.of(record);
+                    } else {
+                        plugin.debug("DatabaseBankStorage.getDailyTransactions() - No record found");
+                        return Optional.empty();
+                    }
+                }
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to get daily transactions", e);
+                throw new RuntimeException("Failed to get daily transactions", e);
+            }
+        }, executorService);
+    }
+    
+    /**
+     * Updates the daily transaction totals for a player and account.
+     * Creates a new record if one doesn't exist for the date.
+     * 
+     * @param accountName The account name
+     * @param playerUuid The player UUID
+     * @param date The date in YYYY-MM-DD format
+     * @param depositAmount The deposit amount to add (can be 0)
+     * @param withdrawAmount The withdrawal amount to add (can be 0)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    public CompletableFuture<Boolean> updateDailyTransactions(@NotNull String accountName,
+                                                               @NotNull UUID playerUuid,
+                                                               @NotNull String date,
+                                                               int depositAmount,
+                                                               int withdrawAmount) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.updateDailyTransactions() - account={}, player={}, date={}, deposit={}, withdraw={}", 
+                accountName, playerUuid, date, depositAmount, withdrawAmount);
+            
+            String dailyTransactionsTable = getTableName("daily_transactions");
+            
+            // Try to update existing record first
+            String updateSql = "UPDATE " + dailyTransactionsTable + 
+                " SET deposit_total = deposit_total + ?, withdraw_total = withdraw_total + ? " +
+                " WHERE account_name = ? AND player_uuid = ? AND date = ?";
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(updateSql)) {
+                
+                stmt.setInt(1, depositAmount);
+                stmt.setInt(2, withdrawAmount);
+                stmt.setString(3, accountName);
+                stmt.setString(4, playerUuid.toString());
+                stmt.setString(5, date);
+                
+                int rows = stmt.executeUpdate();
+                
+                if (rows > 0) {
+                    plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Updated existing record");
+                    return true;
+                }
+                
+                // No existing record, create a new one
+                String insertSql = "INSERT INTO " + dailyTransactionsTable + 
+                    " (account_name, player_uuid, date, deposit_total, withdraw_total) VALUES (?, ?, ?, ?, ?)";
+                
+                try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                    insertStmt.setString(1, accountName);
+                    insertStmt.setString(2, playerUuid.toString());
+                    insertStmt.setString(3, date);
+                    insertStmt.setInt(4, depositAmount);
+                    insertStmt.setInt(5, withdrawAmount);
+                    
+                    int insertRows = insertStmt.executeUpdate();
+                    boolean inserted = insertRows > 0;
+                    plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Created new record: {}", inserted);
+                    return inserted;
+                }
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update daily transactions", e);
+                throw new RuntimeException("Failed to update daily transactions", e);
+            }
+        }, executorService);
+    }
+    
+    /**
+     * Data class for daily transaction records.
+     */
+    public static class DailyTransactionRecord {
+        private final String accountName;
+        private final UUID playerUuid;
+        private final String date;
+        private final int depositTotal;
+        private final int withdrawTotal;
+        
+        public DailyTransactionRecord(@NotNull String accountName, @NotNull UUID playerUuid, 
+                                     @NotNull String date, int depositTotal, int withdrawTotal) {
+            this.accountName = accountName;
+            this.playerUuid = playerUuid;
+            this.date = date;
+            this.depositTotal = depositTotal;
+            this.withdrawTotal = withdrawTotal;
+        }
+        
+        @NotNull
+        public String getAccountName() { return accountName; }
+        
+        @NotNull
+        public UUID getPlayerUuid() { return playerUuid; }
+        
+        @NotNull
+        public String getDate() { return date; }
+        
+        public int getDepositTotal() { return depositTotal; }
+        
+        public int getWithdrawTotal() { return withdrawTotal; }
     }
     
     /**

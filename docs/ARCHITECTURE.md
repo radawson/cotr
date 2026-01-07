@@ -207,7 +207,7 @@ Manages the many-to-many relationship between players and accounts.
 
 **Data Model**:
 - `AccountMembership` - Links player UUID to account name with role
-- `AccountRole` - Enum (OWNER, MEMBER, VIEWER)
+- `AccountRole` - Enum (OWNER, MEMBER, USER, CONTRIBUTOR, VIEWER)
 
 **Storage**:
 - In-memory: ConcurrentHashMap for fast lookups
@@ -459,6 +459,16 @@ MEMBER
 ├── Can: deposit, withdraw, transfer, view balance
 └── Cannot: manage members, delete account
 
+USER
+├── Can: deposit, withdraw (with daily limits), view balance
+└── Cannot: manage members, delete account
+└── Daily limits: Configurable per account or globally
+
+CONTRIBUTOR
+├── Can: deposit (unlimited), view balance
+└── Cannot: withdraw, manage members, delete account
+└── Perfect for: guild dues, donation accounts, kingdom contributions
+
 VIEWER
 └── Can: view balance only
 ```
@@ -540,9 +550,10 @@ VIEWER
 
 ### Access Control
 
-- Role-based access control (OWNER, MEMBER, VIEWER)
+- Role-based access control (OWNER, MEMBER, USER, CONTRIBUTOR, VIEWER)
 - Permission checks for all commands
 - Account access validation before operations
+- Daily transaction limits for USER role
 
 ### Data Integrity
 
