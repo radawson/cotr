@@ -56,7 +56,7 @@ public class CoinListener implements Listener {
         CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
         Player player = event.getPlayer();
         Item droppedItemEntity = event.getItemDrop();
-        ItemStack droppedItem = droppedItemEntity.getItemStack();
+        ItemStack droppedItem = droppedItemEntity.getItemStack().clone(); // Clone to preserve data
         
         plugin.debug("CoinListener.onPlayerDropItem() - player={}, item={}, amount={}", 
             player.getName(), droppedItem.getType(), droppedItem.getAmount());
@@ -67,35 +67,40 @@ public class CoinListener implements Listener {
             return; // Not a coin, let it drop normally
         }
         
-        plugin.debug("CoinListener.onPlayerDropItem() - Coin detected, replacing with custom ItemDisplay entity");
+        plugin.debug("CoinListener.onPlayerDropItem() - Coin detected, will replace with custom ItemDisplay entity");
         
-        // Don't cancel the event - the item has already been removed from inventory.
-        // Instead, remove the vanilla Item entity and create our ItemDisplay in its place.
-        // This avoids duplication (cancelling would return item to inventory).
-        
-        // Get the location of the dropped item entity
-        org.bukkit.Location dropLocation = droppedItemEntity.getLocation();
-        plugin.debug("CoinListener.onPlayerDropItem() - Drop location: {}", dropLocation);
-        
-        // Remove the vanilla Item entity - we'll replace it with ItemDisplay
-        droppedItemEntity.remove();
-        plugin.debug("CoinListener.onPlayerDropItem() - Removed vanilla Item entity");
-        
-        // Create a custom ItemDisplay entity for the coin
-        org.bukkit.entity.ItemDisplay coinDisplay = CoinEntityManager.createCoinDisplay(
-            dropLocation,
-            droppedItem
-        );
-        
-        if (coinDisplay != null) {
-            plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay created successfully, adding velocity");
-            // Add a small velocity to make it look natural
-            coinDisplay.setVelocity(player.getLocation().getDirection().multiply(0.3));
-        } else {
-            plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay creation failed, falling back to normal drop");
-            // Fallback: if display creation fails, drop normally
-            player.getWorld().dropItemNaturally(dropLocation, droppedItem);
-        }
+        // Schedule the entity swap for the next tick.
+        // We can't remove the Item entity during the event - Bukkit will restore the item to inventory.
+        // By scheduling for next tick, the event completes normally, then we swap entities.
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            // Check if the item entity still exists (might have been picked up already)
+            if (!droppedItemEntity.isValid() || droppedItemEntity.isDead()) {
+                plugin.debug("CoinListener.onPlayerDropItem() - Item entity no longer valid, skipping");
+                return;
+            }
+            
+            // Get the current location of the dropped item
+            org.bukkit.Location dropLocation = droppedItemEntity.getLocation();
+            plugin.debug("CoinListener.onPlayerDropItem() - Drop location: {}", dropLocation);
+            
+            // Remove the vanilla Item entity - we'll replace it with ItemDisplay
+            droppedItemEntity.remove();
+            plugin.debug("CoinListener.onPlayerDropItem() - Removed vanilla Item entity");
+            
+            // Create a custom ItemDisplay entity for the coin
+            org.bukkit.entity.ItemDisplay coinDisplay = CoinEntityManager.createCoinDisplay(
+                dropLocation,
+                droppedItem
+            );
+            
+            if (coinDisplay != null) {
+                plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay created successfully");
+            } else {
+                plugin.debug("CoinListener.onPlayerDropItem() - ItemDisplay creation failed, falling back to normal drop");
+                // Fallback: if display creation fails, drop normally
+                player.getWorld().dropItemNaturally(dropLocation, droppedItem);
+            }
+        });
     }
     
     /**
