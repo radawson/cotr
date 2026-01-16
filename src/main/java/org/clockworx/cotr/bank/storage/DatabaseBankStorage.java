@@ -1,6 +1,7 @@
 package org.clockworx.cotr.bank.storage;
 
-// Use original package names - shadowJar will relocate these at build time
+// Note: HikariCP classes are relocated by shadowJar to avoid conflicts
+// SQLite is NOT relocated because it uses native libraries that require the original package structure
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
@@ -85,8 +86,8 @@ public class DatabaseBankStorage implements BankStorage {
                 if ("sqlite".equals(databaseType)) {
                     String sqliteUrl = "jdbc:sqlite:" + connectionString;
                     config.setJdbcUrl(sqliteUrl);
-                    // Use relocated class name (relocated by shadowJar)
-                    config.setDriverClassName("org.clockworx.cotr.libs.sqlite.JDBC");
+                    // SQLite is not relocated (native libraries require original package structure)
+                    config.setDriverClassName("org.sqlite.JDBC");
                     plugin.debug("DatabaseBankStorage.initialize() - Final SQLite connection URL: {}", sqliteUrl);
                     plugin.getLogger().info("Connecting to SQLite database: " + connectionString);
                     config.setMaximumPoolSize(1); // SQLite doesn't support multiple connections well

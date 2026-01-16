@@ -85,7 +85,9 @@ tasks.shadowJar {
   
   // Relocate database dependencies to avoid conflicts with other plugins
   relocate("com.zaxxer.hikari", "org.clockworx.cotr.libs.hikari")
-  relocate("org.sqlite", "org.clockworx.cotr.libs.sqlite")
+  // Note: SQLite is NOT relocated because it uses native libraries that depend on
+  // the original package structure. SQLite JDBC is less likely to conflict with
+  // other plugins, so leaving it unrelocated is safe.
   relocate("com.mysql.cj", "org.clockworx.cotr.libs.mysql") // MySQL connector
   relocate("org.slf4j", "org.clockworx.cotr.libs.slf4j") // HikariCP uses SLF4J
   // Note: slf4j-jdk14 implementation classes are automatically relocated with org.slf4j
