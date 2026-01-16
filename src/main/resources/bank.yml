@@ -1,0 +1,60 @@
+# Bank Configuration
+# This file controls banking storage and exchange settings.
+# It is loaded separately from config.yml to keep concerns isolated.
+
+banking:
+  enabled: true
+  default-account-pattern: "{player-uuid}-main"
+  
+  # Use our own BankController or external one
+  use-own-controller: true
+  # ServiceIO registration priority (LOWEST, LOW, NORMAL, HIGH, HIGHEST)
+  service-priority: "NORMAL"
+  
+  storage:
+    # Storage type: "database" or "yaml" (yaml not yet implemented for banks)
+    type: "database"
+    database:
+      # Database type: "sqlite" or "mysql"
+      type: "sqlite"
+      # Table prefix for shared databases (optional, default: empty)
+      # Useful when multiple plugins share the same database
+      # Example: "cotr_" would create tables like "cotr_banks", "cotr_schema_version"
+      prefix: ""
+      # SQLite options
+      file: "banks.db"
+      # MySQL options (if type is mysql)
+      # host: "localhost"
+      # port: 3306
+      # database: "cotr"
+      # username: "cotr"
+      # password: "password"
+
+# Exchange configuration for emerald <-> cotr coins
+exchange:
+  regions:
+    # Fallback region ID when no WorldGuard region applies
+    fallback: "global"
+  emerald:
+    enabled: true
+    # Base rate in coins per emerald
+    base-rate: 10
+    # Min and max clamp for any calculated rate
+    min-rate: 1
+    max-rate: 100
+    # Modes: fixed, thresholds, formula, hybrid
+    mode: "hybrid"
+    # Optional thresholds: choose rate by emerald supply
+    # The first threshold with max-emeralds >= supply is used.
+    thresholds:
+      - max-emeralds: 1000
+        rate: 8
+      - max-emeralds: 5000
+        rate: 10
+      - max-emeralds: 10000
+        rate: 12
+    # Optional formula: base-rate + floor(supply / divisor) * step
+    formula:
+      enabled: false
+      divisor: 500
+      step: 1

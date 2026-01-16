@@ -10,11 +10,12 @@ website: https://github.com/radawson/cotr
 # we register our BankController with ServiceIO for plugin interoperability
 softdepend:
   - ServiceIO
+  - WorldGuard
 
 commands:
   cotr:
     description: Coin of the Realm command
-    usage: /<command> <drop|give|deposit|withdraw|balance|request|account|info> [arguments]
+    usage: /<command> <drop|give|deposit|withdraw|balance|rate|request|account|info> [arguments]
     aliases: [coin, coins]
     permission: cotr.command.use
     permission-message: You do not have permission to use this command.
@@ -35,6 +36,7 @@ permissions:
       cotr.command.deposit: true
       cotr.command.withdraw: true
       cotr.command.balance: true
+      cotr.command.rate: true
       cotr.command.request: true
       cotr.command.account: true
       cotr.command.account.manage: true
@@ -56,6 +58,9 @@ permissions:
     default: true
   cotr.command.balance:
     description: Use /cotr balance command
+    default: true
+  cotr.command.rate:
+    description: Use /cotr rate command
     default: true
   cotr.command.request:
     description: Use /cotr request command

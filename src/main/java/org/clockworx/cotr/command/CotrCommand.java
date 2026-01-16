@@ -12,6 +12,7 @@ import org.clockworx.cotr.CoinOfTheRealmPlugin;
 import org.clockworx.cotr.bank.AccountMembership;
 import org.clockworx.cotr.bank.AccountRole;
 import org.clockworx.cotr.bank.BankManager;
+import org.clockworx.cotr.bank.exchange.BankExchangeService;
 import org.clockworx.cotr.entity.CoinEntityManager;
 import org.clockworx.cotr.item.CoinItem;
 import org.jetbrains.annotations.NotNull;
@@ -62,6 +63,8 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
                 return handleWithdraw(sender, args);
             case "balance":
                 return handleBalance(sender, args);
+            case "rate":
+                return handleRate(sender, args);
             case "request":
                 return handleRequest(sender, args);
             case "account":
@@ -84,8 +87,11 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Component.text("  drop <amount> - Drop coins at your location", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  give <player> <amount> - Give coins to a player (physical)", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  deposit [account] <amount> - Deposit coins to bank", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  deposit emerald [account] <amount> - Convert emeralds to bank coins", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  withdraw [account] <amount> - Withdraw coins from bank", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  withdraw emerald [account] <amount> - Convert bank coins to emeralds", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  balance [account] - View bank balance", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  rate emerald - View emerald exchange rate", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  give <player> [account] <amount> - Transfer coins (bank-to-bank)", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  request <player> [account] <amount> - Request coins from player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  account <create|list|members|add|remove|delete> - Manage accounts", NamedTextColor.GRAY));
@@ -345,6 +351,10 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         
+        if (args[1].equalsIgnoreCase("emerald")) {
+            return handleDepositEmerald(sender, args);
+        }
+        
         String accountName = null;
         int amount;
         
@@ -425,6 +435,10 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         
+        if (args[1].equalsIgnoreCase("emerald")) {
+            return handleWithdrawEmerald(sender, args);
+        }
+        
         String accountName = null;
         int amount;
         
@@ -460,6 +474,134 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             } else {
                 sender.sendMessage(Component.text("Withdrawal failed. Check your balance and account access.", NamedTextColor.RED));
             }
+        });
+        
+        return true;
+    }
+    
+    /**
+     * Handles /cotr deposit emerald [account] <amount>
+     */
+    private boolean handleDepositEmerald(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
+            return true;
+        }
+        
+        Player player = (Player) sender;
+        BankExchangeService exchangeService = getExchangeService();
+        if (exchangeService == null) {
+            sender.sendMessage(Component.text("Emerald exchange is not available.", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("Usage: /cotr deposit emerald [account] <amount>", NamedTextColor.RED));
+            return true;
+        }
+        
+        String accountName = null;
+        int amount;
+        
+        if (args.length == 3) {
+            try {
+                amount = Integer.parseInt(args[2]);
+            } catch (NumberFormatException e) {
+                sender.sendMessage(Component.text("Invalid amount: " + args[2] + " (must be a whole number)", NamedTextColor.RED));
+                return true;
+            }
+        } else if (args.length == 4) {
+            accountName = args[2];
+            try {
+                amount = Integer.parseInt(args[3]);
+            } catch (NumberFormatException e) {
+                sender.sendMessage(Component.text("Invalid amount: " + args[3] + " (must be a whole number)", NamedTextColor.RED));
+                return true;
+            }
+        } else {
+            sender.sendMessage(Component.text("Usage: /cotr deposit emerald [account] <amount>", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (amount <= 0) {
+            sender.sendMessage(Component.text("Amount must be greater than 0", NamedTextColor.RED));
+            return true;
+        }
+        
+        exchangeService.depositEmerald(player, accountName, amount).thenAccept(result -> {
+            if (result == null) {
+                sender.sendMessage(Component.text("Emerald deposit failed. Check your emeralds and account access.", NamedTextColor.RED));
+                return;
+            }
+            
+            sender.sendMessage(Component.text("Deposited " + result.getEmeraldAmount() + " emerald(s) for " +
+                result.getCoinAmount() + " coins.", NamedTextColor.GREEN));
+            sender.sendMessage(Component.text("Rate: 1 emerald = " + result.getRate() + " coins", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("Balance (" + result.getAccountName() + "): " + result.getNewBalance() + " coins", NamedTextColor.GRAY));
+        });
+        
+        return true;
+    }
+    
+    /**
+     * Handles /cotr withdraw emerald [account] <amount>
+     */
+    private boolean handleWithdrawEmerald(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
+            return true;
+        }
+        
+        Player player = (Player) sender;
+        BankExchangeService exchangeService = getExchangeService();
+        if (exchangeService == null) {
+            sender.sendMessage(Component.text("Emerald exchange is not available.", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("Usage: /cotr withdraw emerald [account] <amount>", NamedTextColor.RED));
+            return true;
+        }
+        
+        String accountName = null;
+        int amount;
+        
+        if (args.length == 3) {
+            try {
+                amount = Integer.parseInt(args[2]);
+            } catch (NumberFormatException e) {
+                sender.sendMessage(Component.text("Invalid amount: " + args[2] + " (must be a whole number)", NamedTextColor.RED));
+                return true;
+            }
+        } else if (args.length == 4) {
+            accountName = args[2];
+            try {
+                amount = Integer.parseInt(args[3]);
+            } catch (NumberFormatException e) {
+                sender.sendMessage(Component.text("Invalid amount: " + args[3] + " (must be a whole number)", NamedTextColor.RED));
+                return true;
+            }
+        } else {
+            sender.sendMessage(Component.text("Usage: /cotr withdraw emerald [account] <amount>", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (amount <= 0) {
+            sender.sendMessage(Component.text("Amount must be greater than 0", NamedTextColor.RED));
+            return true;
+        }
+        
+        exchangeService.withdrawEmerald(player, accountName, amount).thenAccept(result -> {
+            if (result == null) {
+                sender.sendMessage(Component.text("Emerald withdrawal failed. Check your balance and bank reserves.", NamedTextColor.RED));
+                return;
+            }
+            
+            sender.sendMessage(Component.text("Withdrew " + result.getEmeraldAmount() + " emerald(s) for " +
+                result.getCoinAmount() + " coins.", NamedTextColor.GREEN));
+            sender.sendMessage(Component.text("Rate: 1 emerald = " + result.getRate() + " coins", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("Balance (" + result.getAccountName() + "): " + result.getNewBalance() + " coins", NamedTextColor.GRAY));
         });
         
         return true;
@@ -521,6 +663,42 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
                 }
             });
         }
+        
+        return true;
+    }
+    
+    /**
+     * Handles /cotr rate emerald
+     */
+    private boolean handleRate(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (!sender.hasPermission("cotr.command.rate")) {
+            sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
+            return true;
+        }
+        
+        if (args.length < 2 || !args[1].equalsIgnoreCase("emerald")) {
+            sender.sendMessage(Component.text("Usage: /cotr rate emerald", NamedTextColor.RED));
+            return true;
+        }
+        
+        Player player = (Player) sender;
+        BankExchangeService exchangeService = getExchangeService();
+        if (exchangeService == null) {
+            sender.sendMessage(Component.text("Emerald exchange is not available.", NamedTextColor.RED));
+            return true;
+        }
+        
+        exchangeService.getRateQuote(player).thenAccept(quote -> {
+            sender.sendMessage(Component.text("Emerald exchange rate for region '" + quote.getRegionId() + "':", NamedTextColor.GOLD));
+            sender.sendMessage(Component.text("  1 emerald = " + quote.getRate() + " coins", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("  Tracked supply: " + quote.getSupply() + " emeralds", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("  Bank reserve: " + quote.getBankReserve() + " emeralds", NamedTextColor.GRAY));
+        });
         
         return true;
     }
@@ -802,6 +980,12 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         return plugin != null ? plugin.getBankManager() : null;
     }
     
+    @Nullable
+    private BankExchangeService getExchangeService() {
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        return plugin != null ? plugin.getBankExchangeService() : null;
+    }
+    
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
         List<String> completions = new ArrayList<>();
@@ -812,6 +996,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             completions.add("deposit");
             completions.add("withdraw");
             completions.add("balance");
+            completions.add("rate");
             completions.add("request");
             completions.add("account");
             completions.add("info");
@@ -834,6 +1019,11 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             for (Player player : sender.getServer().getOnlinePlayers()) {
                 completions.add(player.getName());
             }
+            return filterCompletions(completions, args[1]);
+        }
+        
+        if ((subcommand.equals("deposit") || subcommand.equals("withdraw") || subcommand.equals("rate")) && args.length == 2) {
+            completions.add("emerald");
             return filterCompletions(completions, args[1]);
         }
         

@@ -456,6 +456,95 @@ public class BankManager {
     }
     
     /**
+     * Deposits coins directly into a bank account without taking physical items.
+     * This is intended for exchange services that convert other items into bank balance.
+     *
+     * @param player The player depositing
+     * @param accountName The account name (or null for default)
+     * @param amount The amount to deposit (in coins, integer)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    public CompletableFuture<Boolean> depositBalance(@NotNull Player player, @Nullable String accountName, int amount) {
+        plugin.debug("BankManager.depositBalance() - player={}, accountName={}, amount={}", player.getName(), accountName, amount);
+        
+        if (!isBankingEnabled()) {
+            plugin.debug("BankManager.depositBalance() - Banking not enabled, returning false");
+            return CompletableFuture.completedFuture(false);
+        }
+        
+        CompletableFuture<String> accountFuture = accountName != null ?
+            CompletableFuture.completedFuture(accountName) :
+            getDefaultAccount(player);
+        
+        return accountFuture.thenCompose(accName -> {
+            plugin.debug("BankManager.depositBalance() - Resolved account name: {}", accName);
+            
+            if (accName == null) {
+                plugin.debug("BankManager.depositBalance() - Account name is null, returning false");
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
+            if (!hasAccess) {
+                plugin.debug("BankManager.depositBalance() - Player {} does not have access to account '{}'", player.getName(), accName);
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            AccountRole role = membershipManager.getRole(player.getUniqueId(), accName);
+            if (role == null || !role.canDeposit()) {
+                plugin.debug("BankManager.depositBalance() - Player {} role {} cannot deposit to account '{}'",
+                    player.getName(), role != null ? role.name() : "null", accName);
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            if (role == AccountRole.USER) {
+                String today = java.time.LocalDate.now().toString();
+                CompletableFuture<Boolean> limitCheck = checkDailyDepositLimit(accName, player.getUniqueId(), today, amount);
+                return limitCheck.thenCompose(withinLimit -> {
+                    if (!withinLimit) {
+                        plugin.debug("BankManager.depositBalance() - Daily deposit limit exceeded for USER role");
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    return proceedWithBalanceDeposit(player, accName, amount, role, today);
+                });
+            }
+            
+            return proceedWithBalanceDeposit(player, accName, amount, role, null);
+        });
+    }
+    
+    /**
+     * Proceeds with balance-only deposit after permission checks.
+     */
+    @NotNull
+    private CompletableFuture<Boolean> proceedWithBalanceDeposit(@NotNull Player player, @NotNull String accName,
+                                                                 int amount, @NotNull AccountRole role, @Nullable String date) {
+        return getAccount(player, accName)
+            .thenCompose(bank -> {
+                if (bank == null) {
+                    plugin.debug("BankManager.proceedWithBalanceDeposit() - Bank is null, returning false");
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                BigDecimal depositAmount = BigDecimal.valueOf(amount);
+                BigDecimal newBalance = BankReflectionHelper.deposit(bank, depositAmount);
+                
+                if (newBalance == null) {
+                    plugin.debug("BankManager.proceedWithBalanceDeposit() - Deposit returned null");
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                if (role == AccountRole.USER && date != null) {
+                    updateDailyDeposit(accName, player.getUniqueId(), date, amount);
+                }
+                
+                plugin.debug("BankManager.proceedWithBalanceDeposit() - Deposit successful, new balance: {}", newBalance);
+                return CompletableFuture.completedFuture(true);
+            });
+    }
+    
+    /**
      * Proceeds with the deposit operation after permission checks.
      * 
      * @param player The player depositing
@@ -576,6 +665,102 @@ public class BankManager {
             // For other roles (OWNER, MEMBER), proceed without daily limits
             return proceedWithWithdraw(player, accName, amount, role, null);
         });
+    }
+    
+    /**
+     * Withdraws coins from a bank account without giving physical items.
+     * This is intended for exchange services that convert bank balance into other items.
+     *
+     * @param player The player withdrawing
+     * @param accountName The account name (or null for default)
+     * @param amount The amount to withdraw (in coins, integer)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    public CompletableFuture<Boolean> withdrawBalance(@NotNull Player player, @Nullable String accountName, int amount) {
+        plugin.debug("BankManager.withdrawBalance() - player={}, accountName={}, amount={}", player.getName(), accountName, amount);
+        
+        if (!isBankingEnabled()) {
+            plugin.debug("BankManager.withdrawBalance() - Banking not enabled, returning false");
+            return CompletableFuture.completedFuture(false);
+        }
+        
+        CompletableFuture<String> accountFuture = accountName != null ?
+            CompletableFuture.completedFuture(accountName) :
+            getDefaultAccount(player);
+        
+        return accountFuture.thenCompose(accName -> {
+            plugin.debug("BankManager.withdrawBalance() - Resolved account name: {}", accName);
+            
+            if (accName == null) {
+                plugin.debug("BankManager.withdrawBalance() - Account name is null, returning false");
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            boolean hasAccess = membershipManager.hasAccess(player.getUniqueId(), accName);
+            if (!hasAccess) {
+                plugin.debug("BankManager.withdrawBalance() - Player {} does not have access to account '{}'", player.getName(), accName);
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            AccountRole role = membershipManager.getRole(player.getUniqueId(), accName);
+            if (role == null || !role.canWithdraw()) {
+                plugin.debug("BankManager.withdrawBalance() - Player {} role {} cannot withdraw from account '{}'",
+                    player.getName(), role != null ? role.name() : "null", accName);
+                return CompletableFuture.completedFuture(false);
+            }
+            
+            if (role == AccountRole.USER) {
+                String today = java.time.LocalDate.now().toString();
+                CompletableFuture<Boolean> limitCheck = checkDailyWithdrawLimit(accName, player.getUniqueId(), today, amount);
+                return limitCheck.thenCompose(withinLimit -> {
+                    if (!withinLimit) {
+                        plugin.debug("BankManager.withdrawBalance() - Daily withdrawal limit exceeded for USER role");
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    return proceedWithBalanceWithdraw(player, accName, amount, role, today);
+                });
+            }
+            
+            return proceedWithBalanceWithdraw(player, accName, amount, role, null);
+        });
+    }
+    
+    /**
+     * Proceeds with balance-only withdraw after permission checks.
+     */
+    @NotNull
+    private CompletableFuture<Boolean> proceedWithBalanceWithdraw(@NotNull Player player, @NotNull String accName,
+                                                                  int amount, @NotNull AccountRole role, @Nullable String date) {
+        return getAccount(player, accName)
+            .thenCompose(bank -> {
+                if (bank == null) {
+                    plugin.debug("BankManager.proceedWithBalanceWithdraw() - Bank is null, returning false");
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                BigDecimal balance = BankReflectionHelper.getBalance(bank);
+                int balanceInt = balance != null ? balance.intValue() : 0;
+                if (balanceInt < amount) {
+                    plugin.debug("BankManager.proceedWithBalanceWithdraw() - Insufficient balance: {} < {}", balanceInt, amount);
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                BigDecimal withdrawAmount = BigDecimal.valueOf(amount);
+                BigDecimal newBalance = BankReflectionHelper.withdraw(bank, withdrawAmount);
+                
+                if (newBalance == null) {
+                    plugin.debug("BankManager.proceedWithBalanceWithdraw() - Withdrawal returned null");
+                    return CompletableFuture.completedFuture(false);
+                }
+                
+                if (role == AccountRole.USER && date != null) {
+                    updateDailyWithdraw(accName, player.getUniqueId(), date, amount);
+                }
+                
+                plugin.debug("BankManager.proceedWithBalanceWithdraw() - Withdrawal successful, new balance: {}", newBalance);
+                return CompletableFuture.completedFuture(true);
+            });
     }
     
     /**

@@ -33,7 +33,9 @@ public class ConfigManager {
     private final CoinOfTheRealmPlugin plugin;
     private FileConfiguration config;
     private FileConfiguration coinConfig;
+    private FileConfiguration bankConfig;
     private CoinConfig coinConfigObject;
+    private BankConfig bankConfigObject;
     private boolean debugEnabled;
     private boolean bankingEnabled;
     private String defaultAccountPattern;
@@ -93,8 +95,9 @@ public class ConfigManager {
         loadCoinConfigFile();
         loadCoinConfig();
         
-        // Load banking configuration
-        loadBankingConfig();
+        // Load banking configuration from bank.yml
+        loadBankConfigFile();
+        loadBankConfig();
         
         // Load resource pack configuration
         loadResourcePackConfig();
@@ -117,6 +120,22 @@ public class ConfigManager {
         
         // Load the coin config
         coinConfig = YamlConfiguration.loadConfiguration(coinConfigFile);
+    }
+    
+    /**
+     * Loads the bank.yml configuration file.
+     * Creates a default bank.yml if it doesn't exist.
+     */
+    private void loadBankConfigFile() {
+        File bankConfigFile = new File(plugin.getDataFolder(), "bank.yml");
+        
+        // If bank.yml doesn't exist, save default
+        if (!bankConfigFile.exists()) {
+            saveDefaultBankConfig();
+        }
+        
+        // Load the bank config
+        bankConfig = YamlConfiguration.loadConfiguration(bankConfigFile);
     }
     
     /**
@@ -154,6 +173,25 @@ public class ConfigManager {
             }
         } catch (IOException e) {
             plugin.getLogger().severe("Failed to save default config.yml: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Saves the default bank.yml from resources to the data folder.
+     */
+    private void saveDefaultBankConfig() {
+        File bankConfigFile = new File(plugin.getDataFolder(), "bank.yml");
+        
+        // Copy default bank config from resources
+        try (InputStream defaultBankConfig = plugin.getResource("bank.yml")) {
+            if (defaultBankConfig != null) {
+                Files.copy(defaultBankConfig, bankConfigFile.toPath());
+                plugin.getLogger().info("Created default bank.yml");
+            } else {
+                plugin.getLogger().warning("Default bank.yml not found in resources!");
+            }
+        } catch (IOException e) {
+            plugin.getLogger().severe("Failed to save default bank.yml: " + e.getMessage());
         }
     }
     
@@ -311,22 +349,106 @@ public class ConfigManager {
     /**
      * Loads the banking configuration from the config file.
      */
-    private void loadBankingConfig() {
-        bankingEnabled = config.getBoolean("banking.enabled", true);
-        defaultAccountPattern = config.getString("banking.default-account-pattern", "{player-uuid}-main");
-        useOwnController = config.getBoolean("banking.use-own-controller", true);
-        servicePriority = config.getString("banking.service-priority", "NORMAL");
+    private void loadBankConfig() {
+        if (bankConfig == null) {
+            plugin.getLogger().warning("bank.yml not loaded; banking configuration may be invalid.");
+            return;
+        }
+        
+        bankingEnabled = bankConfig.getBoolean("banking.enabled", true);
+        defaultAccountPattern = bankConfig.getString("banking.default-account-pattern", "{player-uuid}-main");
+        useOwnController = bankConfig.getBoolean("banking.use-own-controller", true);
+        servicePriority = bankConfig.getString("banking.service-priority", "NORMAL");
         
         // Bank storage configuration
-        bankStorageType = config.getString("banking.storage.type", "database");
-        databaseType = config.getString("banking.storage.database.type", "sqlite");
-        databasePrefix = config.getString("banking.storage.database.prefix", "");
-        databaseFile = config.getString("banking.storage.database.file", "banks.db");
-        databaseHost = config.getString("banking.storage.database.host", "localhost");
-        databasePort = config.getInt("banking.storage.database.port", 3306);
-        databaseName = config.getString("banking.storage.database.database", "cotr");
-        databaseUsername = config.getString("banking.storage.database.username", "cotr");
-        databasePassword = config.getString("banking.storage.database.password", "");
+        bankStorageType = bankConfig.getString("banking.storage.type", "database");
+        databaseType = bankConfig.getString("banking.storage.database.type", "sqlite");
+        databasePrefix = bankConfig.getString("banking.storage.database.prefix", "");
+        databaseFile = bankConfig.getString("banking.storage.database.file", "banks.db");
+        databaseHost = bankConfig.getString("banking.storage.database.host", "localhost");
+        databasePort = bankConfig.getInt("banking.storage.database.port", 3306);
+        databaseName = bankConfig.getString("banking.storage.database.database", "cotr");
+        databaseUsername = bankConfig.getString("banking.storage.database.username", "cotr");
+        databasePassword = bankConfig.getString("banking.storage.database.password", "");
+        
+        // Emerald exchange configuration
+        boolean emeraldExchangeEnabled = bankConfig.getBoolean("exchange.emerald.enabled", true);
+        int baseRate = bankConfig.getInt("exchange.emerald.base-rate", 10);
+        int minRate = bankConfig.getInt("exchange.emerald.min-rate", 1);
+        int maxRate = bankConfig.getInt("exchange.emerald.max-rate", 100);
+        String mode = bankConfig.getString("exchange.emerald.mode", "hybrid").toLowerCase();
+        String fallbackRegion = bankConfig.getString("exchange.regions.fallback", "global");
+        
+        if (minRate < 1) {
+            plugin.getLogger().warning("Invalid exchange.emerald.min-rate: " + minRate + ". Using default: 1");
+            minRate = 1;
+        }
+        if (maxRate < minRate) {
+            plugin.getLogger().warning("exchange.emerald.max-rate < min-rate. Adjusting max-rate to min-rate.");
+            maxRate = minRate;
+        }
+        if (baseRate < minRate || baseRate > maxRate) {
+            plugin.getLogger().warning("exchange.emerald.base-rate out of range. Clamping to [" + minRate + ", " + maxRate + "]");
+            baseRate = Math.max(minRate, Math.min(baseRate, maxRate));
+        }
+        if (fallbackRegion == null || fallbackRegion.isBlank()) {
+            fallbackRegion = "global";
+        }
+        
+        List<BankConfig.Threshold> thresholds = new ArrayList<>();
+        List<?> thresholdList = bankConfig.getList("exchange.emerald.thresholds");
+        if (thresholdList != null) {
+            for (Object thresholdObj : thresholdList) {
+                if (thresholdObj instanceof java.util.Map) {
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, Object> thresholdMap = (java.util.Map<String, Object>) thresholdObj;
+                    Object maxObj = thresholdMap.get("max-emeralds");
+                    Object rateObj = thresholdMap.get("rate");
+                    int maxEmeralds = maxObj instanceof Number ? ((Number) maxObj).intValue() : -1;
+                    int rate = rateObj instanceof Number ? ((Number) rateObj).intValue() : -1;
+                    if (maxEmeralds >= 0 && rate > 0) {
+                        thresholds.add(new BankConfig.Threshold(maxEmeralds, rate));
+                    }
+                }
+            }
+        }
+        
+        boolean formulaEnabled = bankConfig.getBoolean("exchange.emerald.formula.enabled", false);
+        int divisor = bankConfig.getInt("exchange.emerald.formula.divisor", 500);
+        int step = bankConfig.getInt("exchange.emerald.formula.step", 1);
+        if (divisor < 1) {
+            plugin.getLogger().warning("Invalid exchange.emerald.formula.divisor: " + divisor + ". Using default: 500");
+            divisor = 500;
+        }
+        
+        BankConfig.Formula formula = new BankConfig.Formula(formulaEnabled, divisor, step);
+        BankConfig.EmeraldExchangeConfig emeraldExchangeConfig = new BankConfig.EmeraldExchangeConfig(
+            emeraldExchangeEnabled,
+            baseRate,
+            minRate,
+            maxRate,
+            mode,
+            thresholds,
+            formula
+        );
+        BankConfig.ExchangeConfig exchangeConfig = new BankConfig.ExchangeConfig(fallbackRegion, emeraldExchangeConfig);
+        
+        bankConfigObject = new BankConfig(
+            bankingEnabled,
+            defaultAccountPattern,
+            useOwnController,
+            servicePriority,
+            bankStorageType,
+            databaseType,
+            databasePrefix,
+            databaseFile,
+            databaseHost,
+            databasePort,
+            databaseName,
+            databaseUsername,
+            databasePassword,
+            exchangeConfig
+        );
         
         plugin.getLogger().info("Banking enabled: " + bankingEnabled);
         if (bankingEnabled) {
@@ -626,7 +748,19 @@ public class ConfigManager {
     public boolean reload() {
         // Reload coin config file
         loadCoinConfigFile();
+        // Reload bank config file
+        loadBankConfigFile();
         // Reload all configs
         return loadConfig();
+    }
+    
+    /**
+     * Gets the bank configuration.
+     *
+     * @return The BankConfig instance
+     */
+    @NotNull
+    public BankConfig getBankConfig() {
+        return bankConfigObject;
     }
 }

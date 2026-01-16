@@ -31,7 +31,7 @@ public class DatabaseBankStorage implements BankStorage {
     private final String password;
     private HikariDataSource dataSource;
     private ExecutorService executorService;
-    private static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final int CURRENT_SCHEMA_VERSION = 3;
     
     /**
      * Creates a new DatabaseBankStorage.
@@ -158,6 +158,8 @@ public class DatabaseBankStorage implements BankStorage {
         String membershipsTable = getTableName("account_memberships");
         String dailyTransactionsTable = getTableName("daily_transactions");
         String schemaVersionTable = getTableName("schema_version");
+        String emeraldStatsTable = getTableName("emerald_region_stats");
+        String emeraldRatesTable = getTableName("emerald_exchange_rates");
         
         String createTableSql;
         if ("sqlite".equals(databaseType)) {
@@ -193,9 +195,25 @@ public class DatabaseBankStorage implements BankStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_%s_account_date ON %s(account_name, date);
                 CREATE INDEX IF NOT EXISTS idx_%s_player_date ON %s(player_uuid, date);
+                CREATE TABLE IF NOT EXISTS %s (
+                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                    mined_total INT NOT NULL DEFAULT 0,
+                    loot_total INT NOT NULL DEFAULT 0,
+                    mob_total INT NOT NULL DEFAULT 0,
+                    trading_total INT NOT NULL DEFAULT 0,
+                    bank_in_total INT NOT NULL DEFAULT 0,
+                    bank_out_total INT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS %s (
+                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                    current_rate INT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                );
                 """, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable,
                 membershipsTable, membershipsTable, membershipsTable, membershipsTable, membershipsTable,
-                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
+                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable,
+                emeraldStatsTable, emeraldRatesTable);
         } else {
             // MySQL
             createTableSql = String.format("""
@@ -230,8 +248,24 @@ public class DatabaseBankStorage implements BankStorage {
                     INDEX idx_%s_account_date (account_name, date),
                     INDEX idx_%s_player_date (player_uuid, date)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                CREATE TABLE IF NOT EXISTS %s (
+                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                    mined_total INT NOT NULL DEFAULT 0,
+                    loot_total INT NOT NULL DEFAULT 0,
+                    mob_total INT NOT NULL DEFAULT 0,
+                    trading_total INT NOT NULL DEFAULT 0,
+                    bank_in_total INT NOT NULL DEFAULT 0,
+                    bank_out_total INT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                CREATE TABLE IF NOT EXISTS %s (
+                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                    current_rate INT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """, banksTable, banksTable, banksTable, banksTable, membershipsTable, membershipsTable, membershipsTable,
-                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
+                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable,
+                emeraldStatsTable, emeraldRatesTable);
         }
         
         try (Connection conn = dataSource.getConnection();
@@ -361,6 +395,64 @@ public class DatabaseBankStorage implements BankStorage {
                     }
                 }
                 plugin.getLogger().info("Migration 1->2 completed successfully");
+            }
+        }
+        
+        // Migration from version 2 to 3: Add emerald exchange tracking tables
+        if (fromVersion < 3 && toVersion >= 3) {
+            plugin.getLogger().info("Running database migration: version 2 -> 3 (adding emerald exchange tables)");
+            
+            String emeraldStatsTable = getTableName("emerald_region_stats");
+            String emeraldRatesTable = getTableName("emerald_exchange_rates");
+            String createTableSql;
+            
+            if ("sqlite".equals(databaseType)) {
+                createTableSql = String.format("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                        mined_total INT NOT NULL DEFAULT 0,
+                        loot_total INT NOT NULL DEFAULT 0,
+                        mob_total INT NOT NULL DEFAULT 0,
+                        trading_total INT NOT NULL DEFAULT 0,
+                        bank_in_total INT NOT NULL DEFAULT 0,
+                        bank_out_total INT NOT NULL DEFAULT 0,
+                        updated_at BIGINT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS %s (
+                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                        current_rate INT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    );
+                    """, emeraldStatsTable, emeraldRatesTable);
+            } else {
+                createTableSql = String.format("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                        mined_total INT NOT NULL DEFAULT 0,
+                        loot_total INT NOT NULL DEFAULT 0,
+                        mob_total INT NOT NULL DEFAULT 0,
+                        trading_total INT NOT NULL DEFAULT 0,
+                        bank_in_total INT NOT NULL DEFAULT 0,
+                        bank_out_total INT NOT NULL DEFAULT 0,
+                        updated_at BIGINT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    CREATE TABLE IF NOT EXISTS %s (
+                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
+                        current_rate INT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """, emeraldStatsTable, emeraldRatesTable);
+            }
+            
+            try (Statement stmt = conn.createStatement()) {
+                String[] statements = createTableSql.split(";");
+                for (String sql : statements) {
+                    sql = sql.trim();
+                    if (!sql.isEmpty()) {
+                        stmt.execute(sql);
+                    }
+                }
+                plugin.getLogger().info("Migration 2->3 completed successfully");
             }
         }
     }
@@ -1095,6 +1187,214 @@ public class DatabaseBankStorage implements BankStorage {
         }, executorService);
     }
     
+    // ========== Emerald Exchange Tracking Methods ==========
+    
+    /**
+     * Increments emerald tracking counters for a region.
+     * All values are additive deltas (use 0 for fields you are not changing).
+     *
+     * @param regionId The region ID
+     * @param minedDelta Delta for mined emeralds
+     * @param lootDelta Delta for loot emeralds
+     * @param mobDelta Delta for mob drop emeralds
+     * @param tradingDelta Delta for emeralds gained via trading
+     * @param bankInDelta Delta for emeralds deposited into the bank
+     * @param bankOutDelta Delta for emeralds withdrawn from the bank
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    public CompletableFuture<Boolean> incrementEmeraldStats(@NotNull String regionId,
+                                                             int minedDelta,
+                                                             int lootDelta,
+                                                             int mobDelta,
+                                                             int tradingDelta,
+                                                             int bankInDelta,
+                                                             int bankOutDelta) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.incrementEmeraldStats() - region={}, mined={}, loot={}, mob={}, trade={}, bankIn={}, bankOut={}",
+                regionId, minedDelta, lootDelta, mobDelta, tradingDelta, bankInDelta, bankOutDelta);
+            
+            String emeraldStatsTable = getTableName("emerald_region_stats");
+            long now = System.currentTimeMillis();
+            String sql;
+            
+            if ("sqlite".equals(databaseType)) {
+                sql = "INSERT INTO " + emeraldStatsTable +
+                    " (region_id, mined_total, loot_total, mob_total, trading_total, bank_in_total, bank_out_total, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+                    "ON CONFLICT(region_id) DO UPDATE SET " +
+                    "mined_total = mined_total + excluded.mined_total, " +
+                    "loot_total = loot_total + excluded.loot_total, " +
+                    "mob_total = mob_total + excluded.mob_total, " +
+                    "trading_total = trading_total + excluded.trading_total, " +
+                    "bank_in_total = bank_in_total + excluded.bank_in_total, " +
+                    "bank_out_total = bank_out_total + excluded.bank_out_total, " +
+                    "updated_at = excluded.updated_at";
+            } else {
+                sql = "INSERT INTO " + emeraldStatsTable +
+                    " (region_id, mined_total, loot_total, mob_total, trading_total, bank_in_total, bank_out_total, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+                    "ON DUPLICATE KEY UPDATE " +
+                    "mined_total = mined_total + VALUES(mined_total), " +
+                    "loot_total = loot_total + VALUES(loot_total), " +
+                    "mob_total = mob_total + VALUES(mob_total), " +
+                    "trading_total = trading_total + VALUES(trading_total), " +
+                    "bank_in_total = bank_in_total + VALUES(bank_in_total), " +
+                    "bank_out_total = bank_out_total + VALUES(bank_out_total), " +
+                    "updated_at = VALUES(updated_at)";
+            }
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                
+                stmt.setString(1, regionId);
+                stmt.setInt(2, minedDelta);
+                stmt.setInt(3, lootDelta);
+                stmt.setInt(4, mobDelta);
+                stmt.setInt(5, tradingDelta);
+                stmt.setInt(6, bankInDelta);
+                stmt.setInt(7, bankOutDelta);
+                stmt.setLong(8, now);
+                
+                int rows = stmt.executeUpdate();
+                boolean updated = rows > 0;
+                plugin.debug("DatabaseBankStorage.incrementEmeraldStats() - Updated: {}", updated);
+                return updated;
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update emerald stats for region: " + regionId, e);
+                throw new RuntimeException("Failed to update emerald stats", e);
+            }
+        }, executorService);
+    }
+    
+    /**
+     * Loads emerald region stats (returns zeroed totals if none exist).
+     *
+     * @param regionId The region ID
+     * @return A CompletableFuture with EmeraldRegionStats
+     */
+    @NotNull
+    public CompletableFuture<EmeraldRegionStats> getEmeraldRegionStats(@NotNull String regionId) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.getEmeraldRegionStats() - region={}", regionId);
+            
+            String emeraldStatsTable = getTableName("emerald_region_stats");
+            String sql = "SELECT region_id, mined_total, loot_total, mob_total, trading_total, " +
+                "bank_in_total, bank_out_total, updated_at FROM " + emeraldStatsTable + " WHERE region_id = ?";
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                
+                stmt.setString(1, regionId);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return new EmeraldRegionStats(
+                            rs.getString("region_id"),
+                            rs.getInt("mined_total"),
+                            rs.getInt("loot_total"),
+                            rs.getInt("mob_total"),
+                            rs.getInt("trading_total"),
+                            rs.getInt("bank_in_total"),
+                            rs.getInt("bank_out_total"),
+                            rs.getLong("updated_at")
+                        );
+                    }
+                }
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load emerald stats for region: " + regionId, e);
+                throw new RuntimeException("Failed to load emerald stats", e);
+            }
+            
+            return EmeraldRegionStats.empty(regionId);
+        }, executorService);
+    }
+    
+    /**
+     * Stores the current exchange rate for a region.
+     *
+     * @param regionId The region ID
+     * @param rate The current exchange rate (coins per emerald)
+     * @return A CompletableFuture that completes with true if successful
+     */
+    @NotNull
+    public CompletableFuture<Boolean> upsertEmeraldExchangeRate(@NotNull String regionId, int rate) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.upsertEmeraldExchangeRate() - region={}, rate={}", regionId, rate);
+            
+            String emeraldRatesTable = getTableName("emerald_exchange_rates");
+            long now = System.currentTimeMillis();
+            String sql;
+            
+            if ("sqlite".equals(databaseType)) {
+                sql = "INSERT INTO " + emeraldRatesTable +
+                    " (region_id, current_rate, updated_at) VALUES (?, ?, ?) " +
+                    "ON CONFLICT(region_id) DO UPDATE SET " +
+                    "current_rate = excluded.current_rate, " +
+                    "updated_at = excluded.updated_at";
+            } else {
+                sql = "INSERT INTO " + emeraldRatesTable +
+                    " (region_id, current_rate, updated_at) VALUES (?, ?, ?) " +
+                    "ON DUPLICATE KEY UPDATE " +
+                    "current_rate = VALUES(current_rate), " +
+                    "updated_at = VALUES(updated_at)";
+            }
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                
+                stmt.setString(1, regionId);
+                stmt.setInt(2, rate);
+                stmt.setLong(3, now);
+                
+                int rows = stmt.executeUpdate();
+                boolean updated = rows > 0;
+                plugin.debug("DatabaseBankStorage.upsertEmeraldExchangeRate() - Updated: {}", updated);
+                return updated;
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to upsert exchange rate for region: " + regionId, e);
+                throw new RuntimeException("Failed to update exchange rate", e);
+            }
+        }, executorService);
+    }
+    
+    /**
+     * Loads the stored exchange rate for a region.
+     *
+     * @param regionId The region ID
+     * @return A CompletableFuture with an Optional exchange rate record
+     */
+    @NotNull
+    public CompletableFuture<Optional<EmeraldExchangeRateRecord>> getEmeraldExchangeRate(@NotNull String regionId) {
+        return CompletableFuture.supplyAsync(() -> {
+            plugin.debug("DatabaseBankStorage.getEmeraldExchangeRate() - region={}", regionId);
+            
+            String emeraldRatesTable = getTableName("emerald_exchange_rates");
+            String sql = "SELECT region_id, current_rate, updated_at FROM " + emeraldRatesTable + " WHERE region_id = ?";
+            
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                
+                stmt.setString(1, regionId);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return Optional.of(new EmeraldExchangeRateRecord(
+                            rs.getString("region_id"),
+                            rs.getInt("current_rate"),
+                            rs.getLong("updated_at")
+                        ));
+                    }
+                }
+            } catch (SQLException e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load exchange rate for region: " + regionId, e);
+                throw new RuntimeException("Failed to load exchange rate", e);
+            }
+            
+            return Optional.empty();
+        }, executorService);
+    }
+    
     /**
      * Data class for daily transaction records.
      */
@@ -1126,6 +1426,82 @@ public class DatabaseBankStorage implements BankStorage {
         public int getDepositTotal() { return depositTotal; }
         
         public int getWithdrawTotal() { return withdrawTotal; }
+    }
+    
+    /**
+     * Data class for emerald region tracking totals.
+     */
+    public static class EmeraldRegionStats {
+        private final String regionId;
+        private final int minedTotal;
+        private final int lootTotal;
+        private final int mobTotal;
+        private final int tradingTotal;
+        private final int bankInTotal;
+        private final int bankOutTotal;
+        private final long updatedAt;
+        
+        public EmeraldRegionStats(@NotNull String regionId,
+                                  int minedTotal,
+                                  int lootTotal,
+                                  int mobTotal,
+                                  int tradingTotal,
+                                  int bankInTotal,
+                                  int bankOutTotal,
+                                  long updatedAt) {
+            this.regionId = regionId;
+            this.minedTotal = minedTotal;
+            this.lootTotal = lootTotal;
+            this.mobTotal = mobTotal;
+            this.tradingTotal = tradingTotal;
+            this.bankInTotal = bankInTotal;
+            this.bankOutTotal = bankOutTotal;
+            this.updatedAt = updatedAt;
+        }
+        
+        @NotNull
+        public static EmeraldRegionStats empty(@NotNull String regionId) {
+            return new EmeraldRegionStats(regionId, 0, 0, 0, 0, 0, 0, System.currentTimeMillis());
+        }
+        
+        @NotNull
+        public String getRegionId() { return regionId; }
+        
+        public int getMinedTotal() { return minedTotal; }
+        
+        public int getLootTotal() { return lootTotal; }
+        
+        public int getMobTotal() { return mobTotal; }
+        
+        public int getTradingTotal() { return tradingTotal; }
+        
+        public int getBankInTotal() { return bankInTotal; }
+        
+        public int getBankOutTotal() { return bankOutTotal; }
+        
+        public long getUpdatedAt() { return updatedAt; }
+    }
+    
+    /**
+     * Data class for stored exchange rates.
+     */
+    public static class EmeraldExchangeRateRecord {
+        private final String regionId;
+        private final int currentRate;
+        private final long updatedAt;
+        
+        public EmeraldExchangeRateRecord(@NotNull String regionId, int currentRate, long updatedAt) {
+            this.regionId = regionId;
+            this.currentRate = currentRate;
+            this.updatedAt = updatedAt;
+        }
+        
+        @NotNull
+        public String getRegionId() { return regionId; }
+        
+        public int getCurrentRate() { return currentRate; }
+        
+        public long getUpdatedAt() { return updatedAt; }
     }
     
     /**

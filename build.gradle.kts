@@ -15,6 +15,10 @@ repositories {
     name = "thenextlvl"
     url = uri("https://repo.thenextlvl.net/releases")
   }
+  maven {
+    name = "enginehub"
+    url = uri("https://maven.enginehub.org/repo/")
+  }
 }
 
 dependencies {
@@ -22,6 +26,8 @@ dependencies {
   // ServiceIO is optional - only needed at compile time for API reference
   // The plugin uses reflection to interact with ServiceIO at runtime
   compileOnly("net.thenextlvl.services:service-io:2.3.1")
+  // WorldGuard is optional - used for region-based exchange tracking
+  compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.10")
   
   // Database dependencies
   implementation("com.zaxxer:HikariCP:5.1.0")

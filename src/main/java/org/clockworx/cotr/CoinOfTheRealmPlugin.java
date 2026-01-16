@@ -9,10 +9,14 @@ import org.clockworx.cotr.bank.BankManager;
 import org.clockworx.cotr.bank.impl.CotrBankController;
 import org.clockworx.cotr.bank.storage.BankStorage;
 import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
+import org.clockworx.cotr.bank.exchange.BankExchangeService;
+import org.clockworx.cotr.bank.exchange.EmeraldTracker;
 import org.clockworx.cotr.command.CotrCommand;
 import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.datapack.DataPackManager;
 import org.clockworx.cotr.listener.CoinListener;
+import org.clockworx.cotr.listener.EmeraldTrackingListener;
+import org.clockworx.cotr.region.WorldGuardRegionResolver;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,6 +58,9 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     private BankStorage bankStorage;
     private DatabaseBankStorage databaseBankStorage; // Specific type for AccountMembershipManager
     private CotrBankController cotrBankController;
+    private WorldGuardRegionResolver regionResolver;
+    private EmeraldTracker emeraldTracker;
+    private BankExchangeService bankExchangeService;
     
     @Override
     public void onEnable() {
@@ -86,12 +93,24 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         // Initialize bank manager (requires ServiceIO if banking is enabled)
         bankManager = new BankManager(this, membershipManager, configManager);
         
+        // Initialize region resolver and emerald exchange tracking (optional)
+        regionResolver = new WorldGuardRegionResolver(this);
+        if (databaseBankStorage != null) {
+            emeraldTracker = new EmeraldTracker(databaseBankStorage, regionResolver,
+                configManager.getBankConfig().getExchangeConfig());
+            bankExchangeService = new BankExchangeService(bankManager, databaseBankStorage, emeraldTracker,
+                configManager.getBankConfig().getExchangeConfig().getEmeraldExchangeConfig());
+        }
+        
         // Initialize data pack manager and install data pack for custom items
         dataPackManager = new DataPackManager(this);
         installDataPack();
         
         // Register event listeners
         getServer().getPluginManager().registerEvents(new CoinListener(), this);
+        if (emeraldTracker != null) {
+            getServer().getPluginManager().registerEvents(new EmeraldTrackingListener(emeraldTracker), this);
+        }
         
         // Register commands
         registerCommands();
@@ -239,7 +258,7 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         };
         
         cotrCommand.setDescription("Coin of the Realm command");
-        cotrCommand.setUsage("/<command> <drop|give> [arguments]");
+        cotrCommand.setUsage("/<command> <drop|give|deposit|withdraw|balance|rate|request|account|info> [arguments]");
         cotrCommand.setAliases(java.util.Arrays.asList("coin", "coins"));
         cotrCommand.setPermission("cotr.command.use");
         cotrCommand.setPermissionMessage("You do not have permission to use this command.");
@@ -345,6 +364,36 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     @Nullable
     public CotrBankController getCotrBankController() {
         return cotrBankController;
+    }
+    
+    /**
+     * Gets the WorldGuard region resolver (fallbacks to global if WorldGuard isn't installed).
+     *
+     * @return The region resolver
+     */
+    @Nullable
+    public WorldGuardRegionResolver getRegionResolver() {
+        return regionResolver;
+    }
+    
+    /**
+     * Gets the EmeraldTracker instance.
+     *
+     * @return The EmeraldTracker, or null if storage isn't available
+     */
+    @Nullable
+    public EmeraldTracker getEmeraldTracker() {
+        return emeraldTracker;
+    }
+    
+    /**
+     * Gets the BankExchangeService instance.
+     *
+     * @return The BankExchangeService, or null if not initialized
+     */
+    @Nullable
+    public BankExchangeService getBankExchangeService() {
+        return bankExchangeService;
     }
     
     /**
