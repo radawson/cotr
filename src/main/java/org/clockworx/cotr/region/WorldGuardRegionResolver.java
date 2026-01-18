@@ -58,7 +58,16 @@ public class WorldGuardRegionResolver {
             Object platform = worldGuardGetPlatform.invoke(worldGuard);
             Object regionContainer = platformGetRegionContainer.invoke(platform);
             Object regionQuery = regionContainerCreateQuery.invoke(regionContainer);
-            Object wgLocation = bukkitAdapterAdapt.invoke(null, location);
+            
+            // Invoke adapt method - handle different signatures
+            Object wgLocation;
+            if (bukkitAdapterAdapt.getParameterCount() == 1) {
+                wgLocation = bukkitAdapterAdapt.invoke(null, location);
+            } else {
+                // Might need World parameter
+                wgLocation = bukkitAdapterAdapt.invoke(null, location, location.getWorld());
+            }
+            
             Object applicable = regionQueryGetApplicableRegions.invoke(regionQuery, wgLocation);
             @SuppressWarnings("unchecked")
             Set<Object> regions = (Set<Object>) applicableGetRegions.invoke(applicable);
@@ -107,19 +116,71 @@ public class WorldGuardRegionResolver {
                 return;
             }
             
+            // Log WorldGuard version for debugging
+            @SuppressWarnings("deprecation")
+            String wgVersion = wgPlugin.getDescription().getVersion();
+            plugin.debug("WorldGuard version detected: " + wgVersion);
+            
             ClassLoader wgClassLoader = wgPlugin.getClass().getClassLoader();
             
-            // Load classes using WorldGuard's classloader
+            // Load WorldGuard core class
             Class<?> worldGuardClass = Class.forName("com.sk89q.worldguard.WorldGuard", true, wgClassLoader);
-            Class<?> bukkitAdapterClass = Class.forName("com.sk89q.worldguard.bukkit.BukkitAdapter", true, wgClassLoader);
+            
+            // Try to find BukkitAdapter - it may be in different locations in different versions
+            Class<?> bukkitAdapterClass = null;
+            String[] possibleAdapterPaths = {
+                "com.sk89q.worldguard.bukkit.BukkitAdapter",
+                "com.sk89q.worldguard.bukkit.BukkitWorldGuardPlatform",
+                "com.sk89q.worldguard.platform.bukkit.BukkitAdapter"
+            };
+            
+            for (String adapterPath : possibleAdapterPaths) {
+                try {
+                    bukkitAdapterClass = Class.forName(adapterPath, true, wgClassLoader);
+                    plugin.debug("Found BukkitAdapter at: " + adapterPath);
+                    break;
+                } catch (ClassNotFoundException e) {
+                    plugin.debug("BukkitAdapter not found at: " + adapterPath);
+                }
+            }
+            
+            if (bukkitAdapterClass == null) {
+                // Try alternative approach: use WorldEdit's BukkitAdapter or direct location conversion
+                // In WorldGuard 7.x, we might need to use WorldEdit's location classes directly
+                try {
+                    // Try WorldEdit's BukkitAdapter
+                    Class<?> weBukkitAdapter = Class.forName("com.sk89q.worldedit.bukkit.BukkitAdapter", true, wgClassLoader);
+                    bukkitAdapterClass = weBukkitAdapter;
+                    plugin.debug("Using WorldEdit BukkitAdapter instead");
+                } catch (ClassNotFoundException e) {
+                    plugin.getLogger().warning("Could not find BukkitAdapter in any expected location. WorldGuard integration may not work.");
+                    plugin.debug("Tried paths: " + String.join(", ", possibleAdapterPaths) + ", and WorldEdit adapter");
+                    reflectionReady = false;
+                    return;
+                }
+            }
             
             worldGuardGetInstance = worldGuardClass.getMethod("getInstance");
             worldGuardGetPlatform = worldGuardClass.getMethod("getPlatform");
             platformGetRegionContainer = worldGuardGetPlatform.getReturnType().getMethod("getRegionContainer");
             regionContainerCreateQuery = platformGetRegionContainer.getReturnType().getMethod("createQuery");
             
-            // The BukkitAdapter.adapt(Location) returns a WorldEdit location type
-            bukkitAdapterAdapt = bukkitAdapterClass.getMethod("adapt", Location.class);
+            // Try to find the adapt method - it might have different signatures
+            try {
+                bukkitAdapterAdapt = bukkitAdapterClass.getMethod("adapt", Location.class);
+            } catch (NoSuchMethodException e) {
+                // Try alternative method name or signature
+                try {
+                    bukkitAdapterAdapt = bukkitAdapterClass.getMethod("asBlockVector", Location.class);
+                } catch (NoSuchMethodException e2) {
+                    // Try with World parameter
+                    try {
+                        bukkitAdapterAdapt = bukkitAdapterClass.getMethod("adapt", Location.class, org.bukkit.World.class);
+                    } catch (NoSuchMethodException e3) {
+                        throw new NoSuchMethodException("Could not find adapt method in BukkitAdapter. Tried: adapt(Location), asBlockVector(Location), adapt(Location, World)");
+                    }
+                }
+            }
             
             Class<?> regionQueryClass = regionContainerCreateQuery.getReturnType();
             Class<?> wgLocationClass = bukkitAdapterAdapt.getReturnType();
@@ -132,7 +193,7 @@ public class WorldGuardRegionResolver {
             regionGetPriority = protectedRegionClass.getMethod("getPriority");
             regionGetId = protectedRegionClass.getMethod("getId");
             reflectionReady = true;
-            plugin.getLogger().info("WorldGuard reflection initialized successfully");
+            plugin.getLogger().info("WorldGuard reflection initialized successfully (version: " + wgVersion + ")");
         } catch (ClassNotFoundException e) {
             plugin.getLogger().warning("WorldGuard reflection initialization failed: Class not found - " + e.getMessage());
             plugin.debug("WorldGuard reflection ClassNotFoundException: " + e.getClass().getName() + ": " + e.getMessage());
@@ -145,6 +206,9 @@ public class WorldGuardRegionResolver {
         } catch (Exception e) {
             plugin.getLogger().warning("WorldGuard reflection initialization failed: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             plugin.debug("WorldGuard reflection exception: " + e.getClass().getName() + " - " + e.getMessage());
+            if (plugin.getConfigManager() != null && plugin.getConfigManager().isDebugEnabled()) {
+                e.printStackTrace();
+            }
             reflectionReady = false;
         }
     }
