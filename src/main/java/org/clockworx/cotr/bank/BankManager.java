@@ -1079,7 +1079,7 @@ public class BankManager {
     @NotNull
     private CompletableFuture<Boolean> checkDailyDepositLimit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
                                                                @NotNull String date, int amount) {
-        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        org.clockworx.cotr.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
         if (storage == null) {
             plugin.debug("BankManager.checkDailyDepositLimit() - Storage not available, allowing transaction");
             return CompletableFuture.completedFuture(true);
@@ -1087,7 +1087,7 @@ public class BankManager {
         
         return storage.getDailyTransactions(accountName, playerUuid, date)
             .thenApply(recordOpt -> {
-                int currentTotal = recordOpt.map(org.clockworx.cotr.bank.storage.DatabaseBankStorage.DailyTransactionRecord::getDepositTotal)
+                int currentTotal = recordOpt.map(org.clockworx.cotr.storage.DatabaseBankStorage.DailyTransactionRecord::getDepositTotal)
                     .orElse(0);
                 int newTotal = currentTotal + amount;
                 boolean withinLimit = newTotal <= DEFAULT_DAILY_DEPOSIT_LIMIT;
@@ -1111,7 +1111,7 @@ public class BankManager {
     @NotNull
     private CompletableFuture<Boolean> checkDailyWithdrawLimit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
                                                                 @NotNull String date, int amount) {
-        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        org.clockworx.cotr.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
         if (storage == null) {
             plugin.debug("BankManager.checkDailyWithdrawLimit() - Storage not available, allowing transaction");
             return CompletableFuture.completedFuture(true);
@@ -1119,7 +1119,7 @@ public class BankManager {
         
         return storage.getDailyTransactions(accountName, playerUuid, date)
             .thenApply(recordOpt -> {
-                int currentTotal = recordOpt.map(org.clockworx.cotr.bank.storage.DatabaseBankStorage.DailyTransactionRecord::getWithdrawTotal)
+                int currentTotal = recordOpt.map(org.clockworx.cotr.storage.DatabaseBankStorage.DailyTransactionRecord::getWithdrawTotal)
                     .orElse(0);
                 int newTotal = currentTotal + amount;
                 boolean withinLimit = newTotal <= DEFAULT_DAILY_WITHDRAW_LIMIT;
@@ -1141,7 +1141,7 @@ public class BankManager {
      */
     private void updateDailyDeposit(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
                                     @NotNull String date, int amount) {
-        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        org.clockworx.cotr.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
         if (storage == null) {
             plugin.debug("BankManager.updateDailyDeposit() - Storage not available, skipping update");
             return;
@@ -1167,7 +1167,7 @@ public class BankManager {
      */
     private void updateDailyWithdraw(@NotNull String accountName, @NotNull java.util.UUID playerUuid, 
                                      @NotNull String date, int amount) {
-        org.clockworx.cotr.bank.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
+        org.clockworx.cotr.storage.DatabaseBankStorage storage = plugin.getDatabaseBankStorage();
         if (storage == null) {
             plugin.debug("BankManager.updateDailyWithdraw() - Storage not available, skipping update");
             return;

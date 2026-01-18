@@ -1,7 +1,7 @@
 package org.clockworx.cotr.bank;
 
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
-import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
+import org.clockworx.cotr.storage.DatabaseBankStorage;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

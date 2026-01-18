@@ -39,3 +39,23 @@ resource-pack:
   # Uses exponential backoff: first retry after this delay, second after 2x, third after 4x
   retry-delay: 100
 
+storage:
+  # Storage configuration is global and applies to all persistence operations
+  # (banking, account memberships, exchange tracking, etc.)
+  # Storage type: "database" or "yaml" (yaml not yet implemented)
+  type: "database"
+  database:
+    # Database type: "sqlite" or "mysql"
+    type: "sqlite"
+    # Table prefix for shared databases (optional, default: empty)
+    # Useful when multiple plugins share the same database
+    # Example: "cotr_" would create tables like "cotr_banks", "cotr_schema_version"
+    prefix: ""
+    # SQLite options
+    file: "cotr.db"
+    # MySQL options (if type is mysql)
+    # host: "localhost"
+    # port: 3306
+    # database: "cotr"
+    # username: "cotr"
+    # password: "password"

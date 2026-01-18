@@ -95,6 +95,9 @@ public class ConfigManager {
         loadCoinConfigFile();
         loadCoinConfig();
         
+        // Load storage configuration from config.yml (global for all persistence)
+        loadStorageConfig();
+        
         // Load banking configuration from bank.yml
         loadBankConfigFile();
         loadBankConfig();
@@ -347,7 +350,40 @@ public class ConfigManager {
     }
     
     /**
-     * Loads the banking configuration from the config file.
+     * Loads the storage configuration from config.yml.
+     * Storage configuration is global and applies to all persistence operations
+     * (banking, account memberships, exchange tracking, etc.).
+     */
+    private void loadStorageConfig() {
+        // Storage configuration is now in config.yml under the "storage" key
+        bankStorageType = config.getString("storage.type", "database");
+        databaseType = config.getString("storage.database.type", "sqlite");
+        databasePrefix = config.getString("storage.database.prefix", "");
+        databaseFile = config.getString("storage.database.file", "banks.db");
+        databaseHost = config.getString("storage.database.host", "localhost");
+        databasePort = config.getInt("storage.database.port", 3306);
+        databaseName = config.getString("storage.database.database", "cotr");
+        databaseUsername = config.getString("storage.database.username", "cotr");
+        databasePassword = config.getString("storage.database.password", "");
+        
+        plugin.getLogger().info("Storage configuration loaded from config.yml");
+        plugin.getLogger().info("Storage type: " + bankStorageType);
+        if ("database".equals(bankStorageType)) {
+            plugin.getLogger().info("Database type: " + databaseType);
+            if (!databasePrefix.isEmpty()) {
+                plugin.getLogger().info("Database table prefix: '" + databasePrefix + "'");
+            }
+            if ("sqlite".equals(databaseType)) {
+                plugin.getLogger().info("SQLite database file: " + databaseFile);
+            } else if ("mysql".equals(databaseType)) {
+                plugin.getLogger().info("MySQL database: " + databaseName + "@" + databaseHost + ":" + databasePort);
+            }
+        }
+    }
+    
+    /**
+     * Loads the banking configuration from bank.yml.
+     * Note: Storage configuration is no longer in bank.yml - it's in config.yml.
      */
     private void loadBankConfig() {
         if (bankConfig == null) {
@@ -359,17 +395,6 @@ public class ConfigManager {
         defaultAccountPattern = bankConfig.getString("banking.default-account-pattern", "{player-uuid}-main");
         useOwnController = bankConfig.getBoolean("banking.use-own-controller", true);
         servicePriority = bankConfig.getString("banking.service-priority", "NORMAL");
-        
-        // Bank storage configuration
-        bankStorageType = bankConfig.getString("banking.storage.type", "database");
-        databaseType = bankConfig.getString("banking.storage.database.type", "sqlite");
-        databasePrefix = bankConfig.getString("banking.storage.database.prefix", "");
-        databaseFile = bankConfig.getString("banking.storage.database.file", "banks.db");
-        databaseHost = bankConfig.getString("banking.storage.database.host", "localhost");
-        databasePort = bankConfig.getInt("banking.storage.database.port", 3306);
-        databaseName = bankConfig.getString("banking.storage.database.database", "cotr");
-        databaseUsername = bankConfig.getString("banking.storage.database.username", "cotr");
-        databasePassword = bankConfig.getString("banking.storage.database.password", "");
         
         // Emerald exchange configuration
         boolean emeraldExchangeEnabled = bankConfig.getBoolean("exchange.emerald.enabled", true);
@@ -433,37 +458,17 @@ public class ConfigManager {
         );
         BankConfig.ExchangeConfig exchangeConfig = new BankConfig.ExchangeConfig(fallbackRegion, emeraldExchangeConfig);
         
+        // BankConfig no longer includes storage configuration - that's now global in config.yml
         bankConfigObject = new BankConfig(
             bankingEnabled,
             defaultAccountPattern,
             useOwnController,
             servicePriority,
-            bankStorageType,
-            databaseType,
-            databasePrefix,
-            databaseFile,
-            databaseHost,
-            databasePort,
-            databaseName,
-            databaseUsername,
-            databasePassword,
             exchangeConfig
         );
         
         plugin.getLogger().info("Banking enabled: " + bankingEnabled);
         if (bankingEnabled) {
-            plugin.getLogger().info("Bank storage type: " + bankStorageType);
-            if ("database".equals(bankStorageType)) {
-                plugin.getLogger().info("Database type: " + databaseType);
-                if (!databasePrefix.isEmpty()) {
-                    plugin.getLogger().info("Database table prefix: '" + databasePrefix + "'");
-                }
-                if ("sqlite".equals(databaseType)) {
-                    plugin.getLogger().info("SQLite database file: " + databaseFile);
-                } else if ("mysql".equals(databaseType)) {
-                    plugin.getLogger().info("MySQL database: " + databaseName + "@" + databaseHost + ":" + databasePort);
-                }
-            }
             plugin.getLogger().info("Use own BankController: " + useOwnController);
             if (useOwnController) {
                 plugin.getLogger().info("ServiceIO registration priority: " + servicePriority);
@@ -571,7 +576,8 @@ public class ConfigManager {
     }
     
     /**
-     * Gets the bank storage type.
+     * Gets the storage type.
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The storage type ("database" or "yaml")
      */
@@ -582,6 +588,7 @@ public class ConfigManager {
     
     /**
      * Gets the database type.
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database type ("sqlite" or "mysql")
      */
@@ -592,6 +599,7 @@ public class ConfigManager {
     
     /**
      * Gets the database table prefix.
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The table prefix (empty string if no prefix)
      */
@@ -602,6 +610,7 @@ public class ConfigManager {
     
     /**
      * Gets the database file path (for SQLite).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database file path
      */
@@ -612,6 +621,7 @@ public class ConfigManager {
     
     /**
      * Gets the database host (for MySQL).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database host
      */
@@ -622,6 +632,7 @@ public class ConfigManager {
     
     /**
      * Gets the database port (for MySQL).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database port
      */
@@ -631,6 +642,7 @@ public class ConfigManager {
     
     /**
      * Gets the database name (for MySQL).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database name
      */
@@ -641,6 +653,7 @@ public class ConfigManager {
     
     /**
      * Gets the database username (for MySQL).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database username
      */
@@ -651,6 +664,7 @@ public class ConfigManager {
     
     /**
      * Gets the database password (for MySQL).
+     * Storage configuration is global and applies to all persistence operations.
      * 
      * @return The database password
      */

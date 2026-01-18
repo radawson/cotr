@@ -3,8 +3,8 @@ package org.clockworx.cotr.bank.impl;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
-import org.clockworx.cotr.bank.storage.BankRecord;
-import org.clockworx.cotr.bank.storage.BankStorage;
+import org.clockworx.cotr.storage.BankRecord;
+import org.clockworx.cotr.storage.BankStorage;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

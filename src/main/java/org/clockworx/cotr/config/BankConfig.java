@@ -12,50 +12,28 @@ import java.util.List;
  * - Config parsing stays centralized in ConfigManager
  * - Other systems can safely consume typed, validated values
  * - The configuration intent is documented and stable over time
+ *
+ * Note: Storage configuration (database type, connection details, etc.) is now
+ * global and located in config.yml under the "storage" key. This class only
+ * contains banking-specific settings (enabled state, account patterns, exchange
+ * rates, etc.) that are loaded from bank.yml.
  */
 public class BankConfig {
     private final boolean bankingEnabled;
     private final String defaultAccountPattern;
     private final boolean useOwnController;
     private final String servicePriority;
-    private final String bankStorageType;
-    private final String databaseType;
-    private final String databasePrefix;
-    private final String databaseFile;
-    private final String databaseHost;
-    private final int databasePort;
-    private final String databaseName;
-    private final String databaseUsername;
-    private final String databasePassword;
     private final ExchangeConfig exchangeConfig;
 
     public BankConfig(boolean bankingEnabled,
                       @NotNull String defaultAccountPattern,
                       boolean useOwnController,
                       @NotNull String servicePriority,
-                      @NotNull String bankStorageType,
-                      @NotNull String databaseType,
-                      @NotNull String databasePrefix,
-                      @NotNull String databaseFile,
-                      @NotNull String databaseHost,
-                      int databasePort,
-                      @NotNull String databaseName,
-                      @NotNull String databaseUsername,
-                      @NotNull String databasePassword,
                       @NotNull ExchangeConfig exchangeConfig) {
         this.bankingEnabled = bankingEnabled;
         this.defaultAccountPattern = defaultAccountPattern;
         this.useOwnController = useOwnController;
         this.servicePriority = servicePriority;
-        this.bankStorageType = bankStorageType;
-        this.databaseType = databaseType;
-        this.databasePrefix = databasePrefix;
-        this.databaseFile = databaseFile;
-        this.databaseHost = databaseHost;
-        this.databasePort = databasePort;
-        this.databaseName = databaseName;
-        this.databaseUsername = databaseUsername;
-        this.databasePassword = databasePassword;
         this.exchangeConfig = exchangeConfig;
     }
 
@@ -75,50 +53,6 @@ public class BankConfig {
     @NotNull
     public String getServicePriority() {
         return servicePriority;
-    }
-
-    @NotNull
-    public String getBankStorageType() {
-        return bankStorageType;
-    }
-
-    @NotNull
-    public String getDatabaseType() {
-        return databaseType;
-    }
-
-    @NotNull
-    public String getDatabasePrefix() {
-        return databasePrefix;
-    }
-
-    @NotNull
-    public String getDatabaseFile() {
-        return databaseFile;
-    }
-
-    @NotNull
-    public String getDatabaseHost() {
-        return databaseHost;
-    }
-
-    public int getDatabasePort() {
-        return databasePort;
-    }
-
-    @NotNull
-    public String getDatabaseName() {
-        return databaseName;
-    }
-
-    @NotNull
-    public String getDatabaseUsername() {
-        return databaseUsername;
-    }
-
-    @NotNull
-    public String getDatabasePassword() {
-        return databasePassword;
     }
 
     @NotNull

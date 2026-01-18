@@ -1,4 +1,4 @@
-package org.clockworx.cotr.bank.storage;
+package org.clockworx.cotr.storage;
 
 // Note: HikariCP classes are relocated by shadowJar to avoid conflicts
 // SQLite is NOT relocated because it uses native libraries that require the original package structure

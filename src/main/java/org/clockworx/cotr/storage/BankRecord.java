@@ -1,4 +1,4 @@
-package org.clockworx.cotr.bank.storage;
+package org.clockworx.cotr.storage;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

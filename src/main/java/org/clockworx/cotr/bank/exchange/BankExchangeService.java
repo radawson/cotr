@@ -4,7 +4,7 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.clockworx.cotr.bank.BankManager;
-import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
+import org.clockworx.cotr.storage.DatabaseBankStorage;
 import org.clockworx.cotr.config.BankConfig;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

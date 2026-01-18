@@ -40,6 +40,9 @@ BankStorage (database persistence)
 
 ### Basic Banking Configuration
 
+Banking configuration is found in:
+
+**bank.yml** - Banking-specific settings:
 ```yaml
 banking:
   enabled: true
@@ -47,13 +50,6 @@ banking:
   
   # Use our own BankController or external one
   use-own-controller: true
-  
-  storage:
-    type: "database"
-    database:
-      type: "sqlite"
-      prefix: ""
-      file: "banks.db"
 ```
 
 ### Configuration Options
@@ -68,49 +64,53 @@ banking:
 - **Default**: `true`
 - **Description**: If `true`, registers Coin of the Realm's BankController with ServiceIO. If `false`, only uses external BankControllers.
 
-#### `banking.storage.type`
+### Storage Configuration
+
+Storage configuration is **global** and located in `config.yml` under the `storage` key. It applies to all persistence operations including banking, account memberships, exchange tracking, and daily transaction limits.
+
+#### `storage.type` (in config.yml)
 - **Type**: String
 - **Default**: `"database"`
 - **Options**: `"database"` (YAML support coming soon)
-- **Description**: Storage backend for bank data
+- **Description**: Storage backend for all persistence operations
 
-#### `banking.storage.database.type`
+#### `storage.database.type` (in config.yml)
 - **Type**: String
 - **Default**: `"sqlite"`
 - **Options**: `"sqlite"`, `"mysql"`
-- **Description**: Database type for bank storage
+- **Description**: Database type for storage
 
-#### `banking.storage.database.prefix`
+#### `storage.database.prefix` (in config.yml)
 - **Type**: String
 - **Default**: `""` (empty string)
 - **Description**: Table prefix for shared databases. Useful when multiple plugins share the same database. Example: `"cotr_"` creates tables like `cotr_banks`, `cotr_schema_version`. Leave empty for no prefix.
 
-#### `banking.storage.database.file` (SQLite)
+#### `storage.database.file` (in config.yml, SQLite)
 - **Type**: String
 - **Default**: `"banks.db"`
 - **Description**: SQLite database file path (relative to plugin data folder)
 
-#### `banking.storage.database.host` (MySQL)
+#### `storage.database.host` (in config.yml, MySQL)
 - **Type**: String
 - **Default**: `"localhost"`
 - **Description**: MySQL server hostname
 
-#### `banking.storage.database.port` (MySQL)
+#### `storage.database.port` (in config.yml, MySQL)
 - **Type**: Integer
 - **Default**: `3306`
 - **Description**: MySQL server port
 
-#### `banking.storage.database.database` (MySQL)
+#### `storage.database.database` (in config.yml, MySQL)
 - **Type**: String
 - **Default**: `"cotr"`
 - **Description**: MySQL database name
 
-#### `banking.storage.database.username` (MySQL)
+#### `storage.database.username` (in config.yml, MySQL)
 - **Type**: String
 - **Default**: `"cotr"`
 - **Description**: MySQL username
 
-#### `banking.storage.database.password` (MySQL)
+#### `storage.database.password` (in config.yml, MySQL)
 - **Type**: String
 - **Default**: `""`
 - **Description**: MySQL password

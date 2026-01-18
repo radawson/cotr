@@ -7,8 +7,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.clockworx.cotr.bank.AccountMembershipManager;
 import org.clockworx.cotr.bank.BankManager;
 import org.clockworx.cotr.bank.impl.CotrBankController;
-import org.clockworx.cotr.bank.storage.BankStorage;
-import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
+import org.clockworx.cotr.storage.BankStorage;
+import org.clockworx.cotr.storage.DatabaseBankStorage;
 import org.clockworx.cotr.bank.exchange.BankExchangeService;
 import org.clockworx.cotr.bank.exchange.EmeraldTracker;
 import org.clockworx.cotr.command.CotrCommand;
@@ -125,10 +125,14 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
     
     /**
      * Initializes bank storage.
+     * Storage configuration is global and loaded from config.yml (not bank.yml).
+     * This storage is used for all persistence operations including banking,
+     * account memberships, exchange tracking, and daily transaction limits.
      */
     private void initializeBankStorage() {
         debug("CoinOfTheRealmPlugin.initializeBankStorage() - Starting storage initialization");
         
+        // Storage configuration is global and comes from config.yml
         String storageType = configManager.getBankStorageType();
         if (!"database".equals(storageType)) {
             getLogger().warning("Bank storage type '" + storageType + "' is not yet supported. Using database.");

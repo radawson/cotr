@@ -1,7 +1,7 @@
 package org.clockworx.cotr.bank.exchange;
 
 import org.bukkit.Location;
-import org.clockworx.cotr.bank.storage.DatabaseBankStorage;
+import org.clockworx.cotr.storage.DatabaseBankStorage;
 import org.clockworx.cotr.config.BankConfig;
 import org.clockworx.cotr.region.WorldGuardRegionResolver;
 import org.jetbrains.annotations.NotNull;
