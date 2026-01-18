@@ -128,6 +128,7 @@ public class WorldGuardRegionResolver {
             
             // Try to find BukkitAdapter - it may be in different locations in different versions
             Class<?> bukkitAdapterClass = null;
+            ClassLoader adapterClassLoader = wgClassLoader;
             String[] possibleAdapterPaths = {
                 "com.sk89q.worldguard.bukkit.BukkitAdapter",
                 "com.sk89q.worldguard.bukkit.BukkitWorldGuardPlatform",
@@ -148,8 +149,13 @@ public class WorldGuardRegionResolver {
                 // Try alternative approach: use WorldEdit's BukkitAdapter or direct location conversion
                 // In WorldGuard 7.x, we might need to use WorldEdit's location classes directly
                 try {
-                    // Try WorldEdit's BukkitAdapter
-                    Class<?> weBukkitAdapter = Class.forName("com.sk89q.worldedit.bukkit.BukkitAdapter", true, wgClassLoader);
+                    // Prefer WorldEdit plugin classloader if available
+                    org.bukkit.plugin.Plugin wePlugin = plugin.getServer().getPluginManager().getPlugin("WorldEdit");
+                    if (wePlugin != null) {
+                        adapterClassLoader = wePlugin.getClass().getClassLoader();
+                        plugin.debug("WorldEdit detected; using its classloader for adapter");
+                    }
+                    Class<?> weBukkitAdapter = Class.forName("com.sk89q.worldedit.bukkit.BukkitAdapter", true, adapterClassLoader);
                     bukkitAdapterClass = weBukkitAdapter;
                     plugin.debug("Using WorldEdit BukkitAdapter instead");
                 } catch (ClassNotFoundException e) {
@@ -165,21 +171,69 @@ public class WorldGuardRegionResolver {
             platformGetRegionContainer = worldGuardGetPlatform.getReturnType().getMethod("getRegionContainer");
             regionContainerCreateQuery = platformGetRegionContainer.getReturnType().getMethod("createQuery");
             
-            // Try to find the adapt method - it might have different signatures
-            try {
-                bukkitAdapterAdapt = bukkitAdapterClass.getMethod("adapt", Location.class);
-            } catch (NoSuchMethodException e) {
-                // Try alternative method name or signature
-                try {
-                    bukkitAdapterAdapt = bukkitAdapterClass.getMethod("asBlockVector", Location.class);
-                } catch (NoSuchMethodException e2) {
-                    // Try with World parameter
+            // Try to find the method to convert Location to WorldEdit location
+            // In WorldEdit/WorldGuard 7.x, this might be asBlockVector, toVector, or adapt
+            String[] possibleMethodNames = {"adapt", "asBlockVector", "asVector", "toVector", "toBlockVector"};
+            Class<?>[][] possibleSignatures = new Class<?>[][]{
+                new Class<?>[]{Location.class},
+                new Class<?>[]{Location.class, org.bukkit.World.class},
+                new Class<?>[]{org.bukkit.World.class, Location.class}
+            };
+            
+            bukkitAdapterAdapt = null;
+            for (String methodName : possibleMethodNames) {
+                for (Class<?>[] signature : possibleSignatures) {
                     try {
-                        bukkitAdapterAdapt = bukkitAdapterClass.getMethod("adapt", Location.class, org.bukkit.World.class);
-                    } catch (NoSuchMethodException e3) {
-                        throw new NoSuchMethodException("Could not find adapt method in BukkitAdapter. Tried: adapt(Location), asBlockVector(Location), adapt(Location, World)");
+                        bukkitAdapterAdapt = bukkitAdapterClass.getMethod(methodName, signature);
+                        plugin.debug("Found location conversion method: " + methodName + " with " + signature.length + " parameter(s)");
+                        break;
+                    } catch (NoSuchMethodException e) {
+                        // Try next combination
                     }
                 }
+                if (bukkitAdapterAdapt != null) {
+                    break;
+                }
+            }
+            
+            if (bukkitAdapterAdapt == null) {
+                // Last resort: try to find any method that takes Location
+                java.lang.reflect.Method[] methods = bukkitAdapterClass.getMethods();
+                for (java.lang.reflect.Method method : methods) {
+                    if (method.getParameterCount() == 1 || method.getParameterCount() == 2) {
+                        Class<?>[] params = method.getParameterTypes();
+                        boolean hasLocation = false;
+                        for (Class<?> param : params) {
+                            if (param == Location.class || param.isAssignableFrom(Location.class)) {
+                                hasLocation = true;
+                                break;
+                            }
+                        }
+                        if (hasLocation && method.getReturnType() != void.class) {
+                            bukkitAdapterAdapt = method;
+                            plugin.debug("Found location conversion method via search: " + method.getName());
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (bukkitAdapterAdapt == null) {
+                StringBuilder methodDump = new StringBuilder();
+                for (java.lang.reflect.Method method : bukkitAdapterClass.getMethods()) {
+                    methodDump.append(method.getName())
+                        .append("(");
+                    Class<?>[] params = method.getParameterTypes();
+                    for (int i = 0; i < params.length; i++) {
+                        methodDump.append(params[i].getSimpleName());
+                        if (i < params.length - 1) {
+                            methodDump.append(", ");
+                        }
+                    }
+                    methodDump.append(") -> ").append(method.getReturnType().getSimpleName()).append("; ");
+                }
+                plugin.debug("BukkitAdapter method list: " + methodDump);
+                throw new NoSuchMethodException("Could not find any method in BukkitAdapter to convert Location. Tried methods: " + String.join(", ", possibleMethodNames));
             }
             
             Class<?> regionQueryClass = regionContainerCreateQuery.getReturnType();
