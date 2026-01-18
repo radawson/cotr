@@ -99,8 +99,19 @@ public class WorldGuardRegionResolver {
      */
     private void initializeReflection() {
         try {
-            Class<?> worldGuardClass = Class.forName("com.sk89q.worldguard.WorldGuard");
-            Class<?> bukkitAdapterClass = Class.forName("com.sk89q.worldguard.bukkit.BukkitAdapter");
+            // Get WorldGuard plugin to use its classloader
+            org.bukkit.plugin.Plugin wgPlugin = plugin.getServer().getPluginManager().getPlugin("WorldGuard");
+            if (wgPlugin == null) {
+                plugin.getLogger().warning("WorldGuard plugin not found despite earlier detection");
+                reflectionReady = false;
+                return;
+            }
+            
+            ClassLoader wgClassLoader = wgPlugin.getClass().getClassLoader();
+            
+            // Load classes using WorldGuard's classloader
+            Class<?> worldGuardClass = Class.forName("com.sk89q.worldguard.WorldGuard", true, wgClassLoader);
+            Class<?> bukkitAdapterClass = Class.forName("com.sk89q.worldguard.bukkit.BukkitAdapter", true, wgClassLoader);
             
             worldGuardGetInstance = worldGuardClass.getMethod("getInstance");
             worldGuardGetPlatform = worldGuardClass.getMethod("getPlatform");
@@ -117,12 +128,23 @@ public class WorldGuardRegionResolver {
             Class<?> applicableClass = regionQueryGetApplicableRegions.getReturnType();
             applicableGetRegions = applicableClass.getMethod("getRegions");
             
-            Class<?> protectedRegionClass = Class.forName("com.sk89q.worldguard.protection.regions.ProtectedRegion");
+            Class<?> protectedRegionClass = Class.forName("com.sk89q.worldguard.protection.regions.ProtectedRegion", true, wgClassLoader);
             regionGetPriority = protectedRegionClass.getMethod("getPriority");
             regionGetId = protectedRegionClass.getMethod("getId");
             reflectionReady = true;
+            plugin.getLogger().info("WorldGuard reflection initialized successfully");
+        } catch (ClassNotFoundException e) {
+            plugin.getLogger().warning("WorldGuard reflection initialization failed: Class not found - " + e.getMessage());
+            plugin.debug("WorldGuard reflection ClassNotFoundException: " + e.getClass().getName() + ": " + e.getMessage());
+            plugin.debug("Attempted to load class: " + e.getMessage());
+            reflectionReady = false;
+        } catch (NoSuchMethodException e) {
+            plugin.getLogger().warning("WorldGuard reflection initialization failed: Method not found - " + e.getMessage());
+            plugin.debug("WorldGuard reflection NoSuchMethodException: " + e.getClass().getName() + ": " + e.getMessage());
+            reflectionReady = false;
         } catch (Exception e) {
-            plugin.getLogger().warning("WorldGuard reflection initialization failed: " + e.getMessage());
+            plugin.getLogger().warning("WorldGuard reflection initialization failed: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            plugin.debug("WorldGuard reflection exception: " + e.getClass().getName() + " - " + e.getMessage());
             reflectionReady = false;
         }
     }
