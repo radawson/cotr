@@ -41,6 +41,12 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         plugin.debug("CotrCommand.onCommand() - sender={}, label={}, args={}", 
             sender.getName(), label, java.util.Arrays.toString(args));
         
+        // Check base permission (replaces deprecated setPermissionMessage)
+        if (!sender.hasPermission("cotr.command.use")) {
+            sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
+            return true;
+        }
+        
         // Check if any arguments were provided
         if (args.length == 0) {
             plugin.debug("CotrCommand.onCommand() - No arguments provided, showing usage");

@@ -265,7 +265,6 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         cotrCommand.setUsage("/<command> <drop|give|deposit|withdraw|balance|rate|request|account|info> [arguments]");
         cotrCommand.setAliases(java.util.Arrays.asList("coin", "coins"));
         cotrCommand.setPermission("cotr.command.use");
-        cotrCommand.setPermissionMessage("You do not have permission to use this command.");
         
         // Register the command using CommandMap
         getServer().getCommandMap().register("cotr", cotrCommand);
