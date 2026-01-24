@@ -296,44 +296,58 @@ public class WorldGuardRegionResolver {
             }
             
             // Try to find getApplicableRegions method - it may have different signatures in different versions
-            // WorldGuard 7.x uses: getApplicableRegions(Location)
+            // WorldGuard 7.x uses: getApplicableRegions(Location) where Location is com.sk89q.worldedit.util.Location
             // Some versions might have: getApplicableRegions(BlockVector3) or other variants
             regionQueryGetApplicableRegions = null;
             
-            // Strategy 1: Try the location class we got from adapt
+            // Strategy 1: Try WorldEdit Location class first (WorldGuard 7.x standard)
             try {
-                regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", wgLocationClass);
-                plugin.debug("Found getApplicableRegions with location class: " + wgLocationClass.getName());
-            } catch (NoSuchMethodException e) {
-                plugin.debug("getApplicableRegions not found with " + wgLocationClass.getName() + ", trying alternatives");
+                Class<?> weLocationClass = Class.forName("com.sk89q.worldedit.util.Location", true, wgClassLoader);
+                regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", weLocationClass);
+                wgLocationClass = weLocationClass; // Update to use WorldEdit Location
+                plugin.debug("Found getApplicableRegions with WorldEdit Location class (WorldGuard 7.x standard)");
+            } catch (ClassNotFoundException | NoSuchMethodException e) {
+                plugin.debug("getApplicableRegions not found with WorldEdit Location, trying location class from adapt");
                 
-                // Strategy 2: Try common WorldEdit location types
-                String[] possibleLocationClasses = {
-                    "com.sk89q.worldedit.util.Location",
-                    "com.sk89q.worldedit.math.BlockVector3",
-                    "com.sk89q.worldedit.Vector",
-                    "com.sk89q.worldedit.math.Vector3"
-                };
+                // Strategy 2: Try the location class we got from adapt
+                try {
+                    regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", wgLocationClass);
+                    plugin.debug("Found getApplicableRegions with location class: " + wgLocationClass.getName());
+                } catch (NoSuchMethodException e2) {
+                    plugin.debug("getApplicableRegions not found with " + wgLocationClass.getName() + ", trying alternatives");
+                    
+                    // Strategy 3: Try common WorldEdit location types
+                    String[] possibleLocationClasses = {
+                        "com.sk89q.worldedit.math.BlockVector3",
+                        "com.sk89q.worldedit.Vector",
+                        "com.sk89q.worldedit.math.Vector3"
+                    };
                 
-                for (String locationClassName : possibleLocationClasses) {
-                    try {
-                        Class<?> altLocationClass = Class.forName(locationClassName, true, wgClassLoader);
-                        regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", altLocationClass);
-                        plugin.debug("Found getApplicableRegions with alternative location class: " + locationClassName);
-                        // Update wgLocationClass to match what we found
-                        wgLocationClass = altLocationClass;
-                        break;
-                    } catch (ClassNotFoundException | NoSuchMethodException ex) {
-                        // Try next class
+                    for (String locationClassName : possibleLocationClasses) {
+                        try {
+                            Class<?> altLocationClass = Class.forName(locationClassName, true, wgClassLoader);
+                            regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", altLocationClass);
+                            plugin.debug("Found getApplicableRegions with alternative location class: " + locationClassName);
+                            // Update wgLocationClass to match what we found
+                            wgLocationClass = altLocationClass;
+                            break;
+                        } catch (ClassNotFoundException | NoSuchMethodException ex) {
+                            // Try next class
+                        }
                     }
                 }
                 
-                // Strategy 3: If we found methods above, try each one
+                // Strategy 4: If we still haven't found a method, try each available method (but skip primitive types)
                 if (regionQueryGetApplicableRegions == null && !allApplicableMethods.isEmpty()) {
                     for (java.lang.reflect.Method method : allApplicableMethods) {
                         Class<?>[] paramTypes = method.getParameterTypes();
                         if (paramTypes.length == 1) {
                             Class<?> paramType = paramTypes[0];
+                            // Skip primitive types (boolean, int, etc.) - we only want Location/Vector types
+                            if (paramType.isPrimitive()) {
+                                plugin.debug("Skipping getApplicableRegions(" + paramType.getSimpleName() + ") - primitive type not supported");
+                                continue;
+                            }
                             // Check if our location class is compatible
                             if (paramType.isAssignableFrom(wgLocationClass) || 
                                 wgLocationClass.isAssignableFrom(paramType) ||
@@ -382,6 +396,13 @@ public class WorldGuardRegionResolver {
                         if (paramTypes.length == 1) {
                             // Try to see if we can convert our location to this type
                             Class<?> paramType = paramTypes[0];
+                            
+                            // Skip primitive types (boolean, int, etc.) - we only want Location/Vector types
+                            if (paramType.isPrimitive()) {
+                                plugin.debug("Skipping getApplicableRegions(" + paramType.getSimpleName() + ") - primitive type not supported");
+                                continue;
+                            }
+                            
                             plugin.debug("Found getApplicableRegions(" + paramType.getSimpleName() + ") - checking compatibility");
                             
                             // If it's a Location type from WorldEdit, try using it
