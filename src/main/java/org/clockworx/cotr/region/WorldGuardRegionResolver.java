@@ -61,11 +61,32 @@ public class WorldGuardRegionResolver {
             
             // Invoke adapt method - handle different signatures
             Object wgLocation;
-            if (bukkitAdapterAdapt.getParameterCount() == 1) {
-                wgLocation = bukkitAdapterAdapt.invoke(null, location);
-            } else {
-                // Might need World parameter
-                wgLocation = bukkitAdapterAdapt.invoke(null, location, location.getWorld());
+            try {
+                if (bukkitAdapterAdapt.getParameterCount() == 1) {
+                    wgLocation = bukkitAdapterAdapt.invoke(null, location);
+                } else {
+                    // Might need World parameter
+                    wgLocation = bukkitAdapterAdapt.invoke(null, location, location.getWorld());
+                }
+            } catch (Exception e) {
+                plugin.debug("Failed to adapt location: " + e.getMessage());
+                return fallbackRegion;
+            }
+            
+            // Ensure the location type matches what getApplicableRegions expects
+            // If the types don't match, try to find a conversion method
+            Class<?> expectedParamType = regionQueryGetApplicableRegions.getParameterTypes()[0];
+            if (!expectedParamType.isInstance(wgLocation)) {
+                plugin.debug("Location type mismatch: got " + wgLocation.getClass().getName() + ", expected " + expectedParamType.getName());
+                // Try to find a conversion method
+                try {
+                    // Check if there's a method to convert between types
+                    Method convertMethod = wgLocation.getClass().getMethod("to" + expectedParamType.getSimpleName());
+                    wgLocation = convertMethod.invoke(wgLocation);
+                } catch (Exception e) {
+                    plugin.debug("Could not convert location type: " + e.getMessage());
+                    return fallbackRegion;
+                }
             }
             
             Object applicable = regionQueryGetApplicableRegions.invoke(regionQuery, wgLocation);
@@ -238,7 +259,171 @@ public class WorldGuardRegionResolver {
             
             Class<?> regionQueryClass = regionContainerCreateQuery.getReturnType();
             Class<?> wgLocationClass = bukkitAdapterAdapt.getReturnType();
-            regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", wgLocationClass);
+            
+            plugin.debug("RegionQuery class: " + regionQueryClass.getName());
+            plugin.debug("Location class from adapt: " + wgLocationClass.getName());
+            
+            // First, get ALL getApplicableRegions methods to see what's available
+            java.util.List<java.lang.reflect.Method> allApplicableMethods = new java.util.ArrayList<>();
+            for (java.lang.reflect.Method method : regionQueryClass.getMethods()) {
+                if (method.getName().equals("getApplicableRegions")) {
+                    allApplicableMethods.add(method);
+                }
+            }
+            
+            if (allApplicableMethods.isEmpty()) {
+                // Also check declared methods (might be in superclass)
+                for (java.lang.reflect.Method method : regionQueryClass.getDeclaredMethods()) {
+                    if (method.getName().equals("getApplicableRegions")) {
+                        allApplicableMethods.add(method);
+                    }
+                }
+            }
+            
+            // Log all available methods for debugging
+            if (!allApplicableMethods.isEmpty()) {
+                StringBuilder methodList = new StringBuilder();
+                for (java.lang.reflect.Method method : allApplicableMethods) {
+                    methodList.append(method.getName()).append("(");
+                    Class<?>[] params = method.getParameterTypes();
+                    for (int i = 0; i < params.length; i++) {
+                        methodList.append(params[i].getSimpleName());
+                        if (i < params.length - 1) methodList.append(", ");
+                    }
+                    methodList.append("); ");
+                }
+                plugin.debug("All getApplicableRegions methods found: " + methodList);
+            }
+            
+            // Try to find getApplicableRegions method - it may have different signatures in different versions
+            // WorldGuard 7.x uses: getApplicableRegions(Location)
+            // Some versions might have: getApplicableRegions(BlockVector3) or other variants
+            regionQueryGetApplicableRegions = null;
+            
+            // Strategy 1: Try the location class we got from adapt
+            try {
+                regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", wgLocationClass);
+                plugin.debug("Found getApplicableRegions with location class: " + wgLocationClass.getName());
+            } catch (NoSuchMethodException e) {
+                plugin.debug("getApplicableRegions not found with " + wgLocationClass.getName() + ", trying alternatives");
+                
+                // Strategy 2: Try common WorldEdit location types
+                String[] possibleLocationClasses = {
+                    "com.sk89q.worldedit.util.Location",
+                    "com.sk89q.worldedit.math.BlockVector3",
+                    "com.sk89q.worldedit.Vector",
+                    "com.sk89q.worldedit.math.Vector3"
+                };
+                
+                for (String locationClassName : possibleLocationClasses) {
+                    try {
+                        Class<?> altLocationClass = Class.forName(locationClassName, true, wgClassLoader);
+                        regionQueryGetApplicableRegions = regionQueryClass.getMethod("getApplicableRegions", altLocationClass);
+                        plugin.debug("Found getApplicableRegions with alternative location class: " + locationClassName);
+                        // Update wgLocationClass to match what we found
+                        wgLocationClass = altLocationClass;
+                        break;
+                    } catch (ClassNotFoundException | NoSuchMethodException ex) {
+                        // Try next class
+                    }
+                }
+                
+                // Strategy 3: If we found methods above, try each one
+                if (regionQueryGetApplicableRegions == null && !allApplicableMethods.isEmpty()) {
+                    for (java.lang.reflect.Method method : allApplicableMethods) {
+                        Class<?>[] paramTypes = method.getParameterTypes();
+                        if (paramTypes.length == 1) {
+                            Class<?> paramType = paramTypes[0];
+                            // Check if our location class is compatible
+                            if (paramType.isAssignableFrom(wgLocationClass) || 
+                                wgLocationClass.isAssignableFrom(paramType) ||
+                                paramType.getName().contains("Location") ||
+                                paramType.getName().contains("Vector")) {
+                                try {
+                                    // Test if we can use this method
+                                    regionQueryGetApplicableRegions = method;
+                                    plugin.debug("Selected getApplicableRegions(" + paramType.getSimpleName() + ") from available methods");
+                                    wgLocationClass = paramType; // Update to expected type
+                                    break;
+                                } catch (Exception e) {
+                                    plugin.debug("Could not use method with " + paramType.getSimpleName() + ": " + e.getMessage());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (regionQueryGetApplicableRegions == null) {
+                // Last resort: list all getApplicableRegions methods to help debug
+                StringBuilder methodDump = new StringBuilder();
+                java.util.List<java.lang.reflect.Method> applicableMethods = new java.util.ArrayList<>();
+                for (java.lang.reflect.Method method : regionQueryClass.getMethods()) {
+                    if (method.getName().equals("getApplicableRegions")) {
+                        applicableMethods.add(method);
+                        methodDump.append(method.getName())
+                            .append("(");
+                        Class<?>[] params = method.getParameterTypes();
+                        for (int i = 0; i < params.length; i++) {
+                            methodDump.append(params[i].getSimpleName());
+                            if (i < params.length - 1) {
+                                methodDump.append(", ");
+                            }
+                        }
+                        methodDump.append("); ");
+                    }
+                }
+                
+                if (methodDump.length() > 0) {
+                    plugin.debug("Available getApplicableRegions methods in RegionQuery: " + methodDump);
+                    // Try each one to see which works
+                    for (java.lang.reflect.Method method : applicableMethods) {
+                        Class<?>[] paramTypes = method.getParameterTypes();
+                        if (paramTypes.length == 1) {
+                            // Try to see if we can convert our location to this type
+                            Class<?> paramType = paramTypes[0];
+                            plugin.debug("Found getApplicableRegions(" + paramType.getSimpleName() + ") - checking compatibility");
+                            
+                            // If it's a Location type from WorldEdit, try using it
+                            if (paramType.getName().contains("Location") || 
+                                paramType.getName().contains("Vector") ||
+                                paramType.getName().contains("BlockVector")) {
+                                try {
+                                    // Try to convert our location to this type using the adapter
+                                    Object testLocation = bukkitAdapterAdapt.invoke(null, 
+                                        plugin.getServer().getWorlds().get(0).getSpawnLocation());
+                                    if (paramType.isInstance(testLocation) || paramType.isAssignableFrom(testLocation.getClass())) {
+                                        regionQueryGetApplicableRegions = method;
+                                        wgLocationClass = paramType;
+                                        plugin.debug("Successfully matched getApplicableRegions with parameter type: " + paramType.getName());
+                                        break;
+                                    }
+                                } catch (Exception e) {
+                                    plugin.debug("Could not test compatibility with " + paramType.getName() + ": " + e.getMessage());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    plugin.debug("No getApplicableRegions method found in RegionQuery class");
+                    // List all methods for debugging
+                    StringBuilder allMethods = new StringBuilder();
+                    for (java.lang.reflect.Method method : regionQueryClass.getMethods()) {
+                        allMethods.append(method.getName()).append("(");
+                        Class<?>[] params = method.getParameterTypes();
+                        for (int i = 0; i < params.length; i++) {
+                            allMethods.append(params[i].getSimpleName());
+                            if (i < params.length - 1) allMethods.append(", ");
+                        }
+                        allMethods.append("); ");
+                    }
+                    plugin.debug("All RegionQuery methods: " + allMethods);
+                }
+                
+                if (regionQueryGetApplicableRegions == null) {
+                    throw new NoSuchMethodException("Could not find compatible getApplicableRegions method in RegionQuery. Tried location class: " + wgLocationClass.getName());
+                }
+            }
             
             Class<?> applicableClass = regionQueryGetApplicableRegions.getReturnType();
             applicableGetRegions = applicableClass.getMethod("getRegions");
