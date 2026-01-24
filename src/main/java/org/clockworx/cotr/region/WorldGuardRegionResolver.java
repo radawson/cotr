@@ -345,8 +345,8 @@ public class WorldGuardRegionResolver {
                                     plugin.debug("Selected getApplicableRegions(" + paramType.getSimpleName() + ") from available methods");
                                     wgLocationClass = paramType; // Update to expected type
                                     break;
-                                } catch (Exception e) {
-                                    plugin.debug("Could not use method with " + paramType.getSimpleName() + ": " + e.getMessage());
+                                } catch (Exception ex2) {
+                                    plugin.debug("Could not use method with " + paramType.getSimpleName() + ": " + ex2.getMessage());
                                 }
                             }
                         }
@@ -398,8 +398,8 @@ public class WorldGuardRegionResolver {
                                         plugin.debug("Successfully matched getApplicableRegions with parameter type: " + paramType.getName());
                                         break;
                                     }
-                                } catch (Exception e) {
-                                    plugin.debug("Could not test compatibility with " + paramType.getName() + ": " + e.getMessage());
+                                } catch (Exception ex3) {
+                                    plugin.debug("Could not test compatibility with " + paramType.getName() + ": " + ex3.getMessage());
                                 }
                             }
                         }
