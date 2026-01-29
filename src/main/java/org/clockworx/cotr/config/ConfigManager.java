@@ -34,8 +34,10 @@ public class ConfigManager {
     private FileConfiguration config;
     private FileConfiguration coinConfig;
     private FileConfiguration bankConfig;
+    private FileConfiguration dropsConfig;
     private CoinConfig coinConfigObject;
     private BankConfig bankConfigObject;
+    private DropsConfig dropsConfigObject;
     private boolean debugEnabled;
     private boolean bankingEnabled;
     private String defaultAccountPattern;
@@ -102,6 +104,10 @@ public class ConfigManager {
         loadBankConfigFile();
         loadBankConfig();
         
+        // Load mob drops configuration from drops.yml
+        loadDropsConfigFile();
+        loadDropsConfig();
+        
         // Load resource pack configuration
         loadResourcePackConfig();
         
@@ -139,6 +145,22 @@ public class ConfigManager {
         
         // Load the bank config
         bankConfig = YamlConfiguration.loadConfiguration(bankConfigFile);
+    }
+    
+    /**
+     * Loads the drops.yml configuration file.
+     * Creates a default drops.yml if it doesn't exist.
+     */
+    private void loadDropsConfigFile() {
+        File dropsConfigFile = new File(plugin.getDataFolder(), "drops.yml");
+        
+        // If drops.yml doesn't exist, save default
+        if (!dropsConfigFile.exists()) {
+            saveDefaultDropsConfig();
+        }
+        
+        // Load the drops config
+        dropsConfig = YamlConfiguration.loadConfiguration(dropsConfigFile);
     }
     
     /**
@@ -195,6 +217,25 @@ public class ConfigManager {
             }
         } catch (IOException e) {
             plugin.getLogger().severe("Failed to save default bank.yml: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Saves the default drops.yml from resources to the data folder.
+     */
+    private void saveDefaultDropsConfig() {
+        File dropsConfigFile = new File(plugin.getDataFolder(), "drops.yml");
+        
+        // Copy default drops config from resources
+        try (InputStream defaultDropsConfig = plugin.getResource("drops.yml")) {
+            if (defaultDropsConfig != null) {
+                Files.copy(defaultDropsConfig, dropsConfigFile.toPath());
+                plugin.getLogger().info("Created default drops.yml");
+            } else {
+                plugin.getLogger().warning("Default drops.yml not found in resources!");
+            }
+        } catch (IOException e) {
+            plugin.getLogger().severe("Failed to save default drops.yml: " + e.getMessage());
         }
     }
     
@@ -473,6 +514,86 @@ public class ConfigManager {
             if (useOwnController) {
                 plugin.getLogger().info("ServiceIO registration priority: " + servicePriority);
             }
+        }
+    }
+    
+    /**
+     * Loads the mob drops configuration from drops.yml.
+     */
+    private void loadDropsConfig() {
+        if (dropsConfig == null) {
+            plugin.getLogger().warning("drops.yml not loaded; mob drops configuration may be invalid.");
+            // Initialize with disabled config to prevent null pointer exceptions
+            dropsConfigObject = new DropsConfig(false, new java.util.HashMap<>());
+            return;
+        }
+        
+        boolean enabled = dropsConfig.getBoolean("enabled", true);
+        
+        // Parse mob settings
+        java.util.Map<org.bukkit.entity.EntityType, DropsConfig.MobDropSettings> mobSettings = new java.util.HashMap<>();
+        
+        if (dropsConfig.contains("mobs") && dropsConfig.isConfigurationSection("mobs")) {
+            org.bukkit.configuration.ConfigurationSection mobsSection = dropsConfig.getConfigurationSection("mobs");
+            if (mobsSection != null) {
+                for (String mobName : mobsSection.getKeys(false)) {
+                    try {
+                        // Convert string to EntityType enum
+                        org.bukkit.entity.EntityType entityType = org.bukkit.entity.EntityType.valueOf(mobName.toUpperCase());
+                        
+                        // Get mob settings from the mob's configuration section
+                        org.bukkit.configuration.ConfigurationSection mobSection = mobsSection.getConfigurationSection(mobName);
+                        if (mobSection == null) {
+                            plugin.getLogger().warning("Invalid mob configuration for " + mobName + ": not a configuration section. Skipping.");
+                            continue;
+                        }
+                        
+                        double chance = mobSection.getDouble("chance", 0.5);
+                        int minAmount = mobSection.getInt("min-amount", 1);
+                        int maxAmount = mobSection.getInt("max-amount", 3);
+                        
+                        // Validate and clamp values
+                        if (chance < 0.0) {
+                            plugin.getLogger().warning("Invalid chance for " + mobName + ": " + chance + ". Clamping to 0.0");
+                            chance = 0.0;
+                        } else if (chance > 1.0) {
+                            plugin.getLogger().warning("Invalid chance for " + mobName + ": " + chance + ". Clamping to 1.0");
+                            chance = 1.0;
+                        }
+                        
+                        if (minAmount < 1) {
+                            plugin.getLogger().warning("Invalid min-amount for " + mobName + ": " + minAmount + ". Using default: 1");
+                            minAmount = 1;
+                        }
+                        
+                        if (maxAmount < minAmount) {
+                            plugin.getLogger().warning("Invalid max-amount for " + mobName + " (" + maxAmount + " < min " + minAmount + "). Swapping values.");
+                            int temp = minAmount;
+                            minAmount = maxAmount;
+                            maxAmount = temp;
+                        }
+                        
+                        // Create MobDropSettings
+                        try {
+                            DropsConfig.MobDropSettings settings = new DropsConfig.MobDropSettings(chance, minAmount, maxAmount);
+                            mobSettings.put(entityType, settings);
+                            plugin.debug("Loaded drop settings for " + mobName + ": chance=" + chance + ", amount=" + minAmount + "-" + maxAmount);
+                        } catch (IllegalArgumentException e) {
+                            plugin.getLogger().warning("Failed to create drop settings for " + mobName + ": " + e.getMessage());
+                        }
+                        
+                    } catch (IllegalArgumentException e) {
+                        plugin.getLogger().warning("Invalid entity type in drops.yml: " + mobName + ". Skipping.");
+                    }
+                }
+            }
+        }
+        
+        dropsConfigObject = new DropsConfig(enabled, mobSettings);
+        
+        plugin.getLogger().info("Mob drops enabled: " + enabled);
+        if (enabled) {
+            plugin.getLogger().info("Configured " + mobSettings.size() + " mob type(s) for coin drops");
         }
     }
     
@@ -764,6 +885,8 @@ public class ConfigManager {
         loadCoinConfigFile();
         // Reload bank config file
         loadBankConfigFile();
+        // Reload drops config file
+        loadDropsConfigFile();
         // Reload all configs
         return loadConfig();
     }
@@ -776,5 +899,15 @@ public class ConfigManager {
     @NotNull
     public BankConfig getBankConfig() {
         return bankConfigObject;
+    }
+    
+    /**
+     * Gets the mob drops configuration.
+     *
+     * @return The DropsConfig instance
+     */
+    @NotNull
+    public DropsConfig getDropsConfig() {
+        return dropsConfigObject;
     }
 }

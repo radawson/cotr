@@ -1,0 +1,154 @@
+# Mob Drop Configuration
+# This file controls which mobs drop coins and with what probability/amounts
+
+# Enable or disable mob drops globally
+# If false, no coins will drop from mobs regardless of individual mob settings
+enabled: true
+
+# Per-mob-type drop configuration
+# Format: EntityType name (e.g., ZOMBIE, SKELETON, CREEPER)
+# Each mob can have:
+#   chance: Probability (0.0-1.0) that coins will drop when this mob dies
+#           0.0 = never drops, 1.0 = always drops
+#   min-amount: Minimum coins to drop (if chance succeeds)
+#   max-amount: Maximum coins to drop (if chance succeeds)
+#               Amount will be randomly selected between min and max (inclusive)
+#
+# If a mob type is not listed here, it will not drop coins.
+# Use the exact EntityType enum name (case-sensitive, all uppercase).
+
+mobs:
+  # Basic hostile mobs - common enemies
+  ZOMBIE:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  SKELETON:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  CREEPER:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 5
+  
+  SPIDER:
+    chance: 0.4
+    min-amount: 1
+    max-amount: 2
+  
+  CAVE_SPIDER:
+    chance: 0.4
+    min-amount: 1
+    max-amount: 2
+  
+  # More dangerous mobs - higher rewards
+  ENDERMAN:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 5
+  
+  WITCH:
+    chance: 0.5
+    min-amount: 2
+    max-amount: 4
+  
+  # Nether mobs
+  ZOMBIFIED_PIGLIN:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  PIGLIN:
+    chance: 0.4
+    min-amount: 1
+    max-amount: 2
+  
+  PIGLIN_BRUTE:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 4
+  
+  BLAZE:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 5
+  
+  GHAST:
+    chance: 0.7
+    min-amount: 3
+    max-amount: 7
+  
+  MAGMA_CUBE:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  # Ocean mobs
+  DROWNED:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  GUARDIAN:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 4
+  
+  ELDER_GUARDIAN:
+    chance: 0.8
+    min-amount: 5
+    max-amount: 10
+  
+  # End mobs
+  ENDERMITE:
+    chance: 0.3
+    min-amount: 1
+    max-amount: 2
+  
+  SHULKER:
+    chance: 0.7
+    min-amount: 3
+    max-amount: 6
+  
+  # Overworld special mobs
+  PHANTOM:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  VEX:
+    chance: 0.4
+    min-amount: 1
+    max-amount: 2
+  
+  VINDICATOR:
+    chance: 0.6
+    min-amount: 2
+    max-amount: 4
+  
+  EVOKER:
+    chance: 0.7
+    min-amount: 3
+    max-amount: 6
+  
+  PILLAGER:
+    chance: 0.5
+    min-amount: 1
+    max-amount: 3
+  
+  RAVAGER:
+    chance: 0.8
+    min-amount: 4
+    max-amount: 8
+  
+  # Boss mobs - very high rewards
+  WITHER:
+    chance: 1.0
+    min-amount: 20
+    max-amount: 50
+  
+  # Note: Ender Dragon is handled differently (boss bar, respawn mechanics)
+  # If you want to add it, use: ENDER_DRAGON

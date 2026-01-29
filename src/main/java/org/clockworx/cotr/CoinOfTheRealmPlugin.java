@@ -16,6 +16,7 @@ import org.clockworx.cotr.config.ConfigManager;
 import org.clockworx.cotr.datapack.DataPackManager;
 import org.clockworx.cotr.listener.CoinListener;
 import org.clockworx.cotr.listener.EmeraldTrackingListener;
+import org.clockworx.cotr.listener.MobDropListener;
 import org.clockworx.cotr.region.WorldGuardRegionResolver;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -110,6 +111,11 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new CoinListener(), this);
         if (emeraldTracker != null) {
             getServer().getPluginManager().registerEvents(new EmeraldTrackingListener(emeraldTracker), this);
+        }
+        // Register mob drop listener if drops are enabled
+        if (configManager.getDropsConfig() != null && configManager.getDropsConfig().isEnabled()) {
+            getServer().getPluginManager().registerEvents(new MobDropListener(this), this);
+            getLogger().info("Mob drop system enabled - coins will drop from configured mobs");
         }
         
         // Register commands
