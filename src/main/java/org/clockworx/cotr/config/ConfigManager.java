@@ -817,6 +817,31 @@ public class ConfigManager {
             throw new IllegalStateException("Unsupported database type: " + databaseType);
         }
     }
+
+    /**
+     * Builds the shared-library connection settings from this configuration.
+     * Used by both Flyway migrations and the Hibernate session manager.
+     *
+     * @return the database settings for the clockworx-data layer
+     */
+    @NotNull
+    public org.clockworx.data.DatabaseSettings getDatabaseSettings() {
+        String jdbcUrl;
+        if ("sqlite".equals(databaseType)) {
+            File dbFile = new File(plugin.getDataFolder(), databaseFile);
+            jdbcUrl = "jdbc:sqlite:" + dbFile.getAbsolutePath();
+        } else if ("mysql".equals(databaseType)) {
+            jdbcUrl = getDatabaseConnectionString();
+        } else {
+            throw new IllegalStateException("Unsupported database type: " + databaseType);
+        }
+        return org.clockworx.data.DatabaseSettings.withDefaults(
+                org.clockworx.data.DatabaseType.fromString(databaseType),
+                jdbcUrl,
+                databaseUsername,
+                databasePassword,
+                getDatabasePrefix());
+    }
     
     /**
      * Gets the resource pack URL.

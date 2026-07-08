@@ -1,114 +1,84 @@
 plugins {
     id("java")
-    id("com.gradleup.shadow") version "9.0.0-beta12"
-    id("io.papermc.paperweight.userdev") version "2.0.0-beta.18"
+    id("com.gradleup.shadow") version "9.5.1"
+    id("io.papermc.paperweight.userdev") version "2.0.0-beta.21"
 }
 
 group = "org.clockworx.cotr"
 
 repositories {
-  maven {
-    name = "papermc"
-    url = uri("https://repo.papermc.io/repository/maven-public/")
-  }
-  maven {
-    name = "thenextlvl"
-    url = uri("https://repo.thenextlvl.net/releases")
-  }
-  maven {
-    name = "enginehub"
-    url = uri("https://maven.enginehub.org/repo/")
-  }
+    mavenCentral()
+    maven("https://repo.papermc.io/repository/maven-public/")
+    maven("https://repo.thenextlvl.net/releases")
+    maven("https://maven.enginehub.org/repo/")
 }
 
 dependencies {
-  compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
-  // ServiceIO is optional - only needed at compile time for API reference
-  // The plugin uses reflection to interact with ServiceIO at runtime
-  compileOnly("net.thenextlvl.services:service-io:2.3.1")
-  // WorldGuard is optional - used for region-based exchange tracking
-  compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.10")
-  
-  // Database dependencies
-  implementation("com.zaxxer:HikariCP:5.1.0")
-  implementation("org.xerial:sqlite-jdbc:3.45.3.0")
-  // MySQL connector (optional, only needed if using MySQL)
-  implementation("com.mysql:mysql-connector-j:9.1.0")
-  // SLF4J implementation - bridges SLF4J to java.util.logging (used by HikariCP)
-  implementation("org.slf4j:slf4j-jdk14:2.0.16")
-  
-  paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
+    paperweight.paperDevBundle("26.1.2.build.74-stable")
+
+    // Shared Clockworx data layer (Hibernate + Flyway + HikariCP + JDBC drivers)
+    // Provided via composite build from ../clockworx-data (see settings.gradle.kts)
+    implementation("org.clockworx:clockworx-data:0.1.0-SNAPSHOT")
+
+    // ServiceIO is optional - only needed at compile time for API reference
+    compileOnly("net.thenextlvl.services:service-io:2.3.1")
+    // WorldGuard is optional - used for region-based exchange tracking
+    compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.10")
 }
 
 java {
-  toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
 tasks {
-  // Process resources at build time to replace version placeholders
-  // This modifies files in the build output, NOT the source files
-  processResources {
-    // Process YAML resource files for version expansion
-    filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {
-      // Replace ${version} and ${project.version} with actual version
-      // The expand() method processes files during build and outputs to build/resources
-      expand(
-        "version" to project.version,
-        "project.version" to project.version
-      )
+    processResources {
+        filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {
+            expand(
+                "version" to project.version,
+                "project.version" to project.version
+            )
+        }
     }
-  }
-  
-  // Configure the JAR task
-  jar {
-    archiveBaseName.set("CoinOfTheRealm")
-    archiveVersion.set(project.version.toString())
-    
-    // Include processed resources in the JAR
-    from(sourceSets.main.get().output)
-    
-    // Copy resources (like plugin.yml) into the JAR
-    duplicatesStrategy = DuplicatesStrategy.INCLUDE
-  }
+
+    shadowJar {
+        enableAutoRelocation = false
+        archiveClassifier.set("all")
+        archiveBaseName.set("CoinOfTheRealm")
+        archiveVersion.set(project.version.toString())
+
+        manifest {
+            attributes["paperweight-mappings-namespace"] = "mojang"
+        }
+
+        relocate("com.zaxxer.hikari", "org.clockworx.cotr.lib.hikari")
+        relocate("org.hibernate", "org.clockworx.cotr.lib.hibernate")
+        relocate("org.jboss.logging", "org.clockworx.cotr.lib.jboss.logging")
+        relocate("jakarta.persistence", "org.clockworx.cotr.lib.jakarta.persistence")
+        relocate("org.flywaydb", "org.clockworx.cotr.lib.flywaydb")
+        relocate("org.xerial.sqlite", "org.clockworx.cotr.lib.xerial.sqlite")
+        relocate("com.mysql.cj", "org.clockworx.cotr.lib.mysql")
+
+        // IMPORTANT: Specifically exclude the core SQLite package from relocation
+        // to prevent breaking native library loading (JNI).
+        exclude("org/sqlite/**")
+
+        mergeServiceFiles()
+    }
+
+    jar {
+        archiveBaseName.set("CoinOfTheRealm")
+        archiveVersion.set(project.version.toString())
+        manifest {
+            attributes["paperweight-mappings-namespace"] = "mojang"
+        }
+        dependsOn("shadowJar")
+    }
 }
 
-tasks.jar {
-  manifest {
-    attributes["paperweight-mappings-namespace"] = "mojang"
-  }
-}
-// Configure shadowJar to include dependencies
-tasks.shadowJar {
-  manifest {
-    attributes["paperweight-mappings-namespace"] = "mojang"
-  }
-  
-  // Relocate database dependencies to avoid conflicts with other plugins
-  relocate("com.zaxxer.hikari", "org.clockworx.cotr.libs.hikari")
-  // Note: SQLite is NOT relocated because it uses native libraries that depend on
-  // the original package structure. SQLite JDBC is less likely to conflict with
-  // other plugins, so leaving it unrelocated is safe.
-  relocate("com.mysql.cj", "org.clockworx.cotr.libs.mysql") // MySQL connector
-  relocate("org.slf4j", "org.clockworx.cotr.libs.slf4j") // HikariCP uses SLF4J
-  // Note: slf4j-jdk14 implementation classes are automatically relocated with org.slf4j
-  
-  // Merge service files - critical for JDBC driver service provider loading
-  // This ensures META-INF/services files are properly merged when relocating classes
-  mergeServiceFiles()
-  
-  // Archive configuration
-  archiveBaseName.set("CoinOfTheRealm")
-  archiveVersion.set(project.version.toString())
-  
-  // Use "-all" classifier to make it clear this is the fat JAR with dependencies
-  // This prevents confusion with the regular JAR (which doesn't have dependencies)
-  archiveClassifier.set("all")
-  
-  // Shadow plugin automatically includes all runtime dependencies by default
-  // No need to explicitly set configurations
+tasks.assemble {
+    dependsOn(tasks.shadowJar)
 }
 
-// Ensure shadowJar is executed during the build process
 tasks.build {
-  dependsOn(tasks.shadowJar)
+    dependsOn(tasks.shadowJar)
 }

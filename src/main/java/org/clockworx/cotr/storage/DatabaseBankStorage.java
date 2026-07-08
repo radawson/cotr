@@ -1,783 +1,316 @@
 package org.clockworx.cotr.storage;
 
-// Note: HikariCP classes are relocated by shadowJar to avoid conflicts
-// SQLite is NOT relocated because it uses native libraries that require the original package structure
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.logging.Level;
+
+import org.bukkit.plugin.IllegalPluginAccessException;
 import org.clockworx.cotr.CoinOfTheRealmPlugin;
+import org.clockworx.cotr.entity.AccountMembershipEntity;
+import org.clockworx.cotr.entity.BankEntity;
+import org.clockworx.cotr.entity.DailyTransactionEntity;
+import org.clockworx.cotr.entity.EmeraldExchangeRateEntity;
+import org.clockworx.cotr.entity.EmeraldRegionStatsEntity;
+import org.clockworx.data.flyway.FlywayMigrator;
+import org.clockworx.data.hibernate.HibernateSessionManager;
+import org.hibernate.Session;
+import org.hibernate.exception.ConstraintViolationException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.math.BigDecimal;
-import java.util.UUID;
-import java.sql.*;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 /**
- * DatabaseBankStorage - Database-backed implementation of BankStorage
- * 
- * This implementation uses SQLite (with optional MySQL support) to store bank data.
- * Uses HikariCP for connection pooling and provides asynchronous operations.
+ * Database-backed implementation of {@link BankStorage} using the shared
+ * clockworx-data layer (Flyway migrations + Hibernate ORM).
  */
 public class DatabaseBankStorage implements BankStorage {
-    
+
     private final CoinOfTheRealmPlugin plugin;
-    private final String databaseType;
-    private final String connectionString;
-    private final String tablePrefix;
-    private final String username;
-    private final String password;
-    private HikariDataSource dataSource;
-    private ExecutorService executorService;
-    private static final int CURRENT_SCHEMA_VERSION = 3;
-    
+    private HibernateSessionManager sessions;
+    private final Executor asyncExecutor;
+
     /**
      * Creates a new DatabaseBankStorage.
-     * 
+     *
      * @param plugin The plugin instance
-     * @param databaseType The database type ("sqlite" or "mysql")
-     * @param connectionString The database connection string
-     * @param tablePrefix The table prefix (empty string for no prefix)
-     * @param username The database username (for MySQL, null for SQLite)
-     * @param password The database password (for MySQL, null for SQLite)
      */
-    public DatabaseBankStorage(@NotNull CoinOfTheRealmPlugin plugin,
-                              @NotNull String databaseType,
-                              @NotNull String connectionString,
-                              @NotNull String tablePrefix,
-                              @Nullable String username,
-                              @Nullable String password) {
+    public DatabaseBankStorage(@NotNull CoinOfTheRealmPlugin plugin) {
         this.plugin = plugin;
-        this.databaseType = databaseType.toLowerCase();
-        this.connectionString = connectionString;
-        this.tablePrefix = tablePrefix != null ? tablePrefix : "";
-        this.username = username;
-        this.password = password;
+        this.asyncExecutor = task -> {
+            if (plugin.isEnabled()) {
+                try {
+                    plugin.getServer().getScheduler().runTaskAsynchronously(plugin, task);
+                } catch (IllegalPluginAccessException e) {
+                    task.run();
+                }
+            } else {
+                task.run();
+            }
+        };
     }
-    
-    /**
-     * Gets the table name with prefix applied.
-     * 
-     * @param baseName The base table name (e.g., "banks")
-     * @return The prefixed table name (e.g., "cotr_banks" if prefix is "cotr_")
-     */
-    @NotNull
-    private String getTableName(@NotNull String baseName) {
-        return tablePrefix + baseName;
-    }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Void> initialize() {
-        // Create executor service first (before using it in runAsync)
-        executorService = Executors.newFixedThreadPool(4);
-        
         return CompletableFuture.runAsync(() -> {
-            plugin.debug("DatabaseBankStorage.initialize() - Initializing database storage: type={}", databaseType);
-            
+            plugin.debug("DatabaseBankStorage.initialize() - Initializing database storage");
+
             try {
-                
-                // Setup HikariCP connection pool
-                HikariConfig config = new HikariConfig();
-                
-                if ("sqlite".equals(databaseType)) {
-                    String sqliteUrl = "jdbc:sqlite:" + connectionString;
-                    config.setJdbcUrl(sqliteUrl);
-                    // SQLite is not relocated (native libraries require original package structure)
-                    config.setDriverClassName("org.sqlite.JDBC");
-                    plugin.debug("DatabaseBankStorage.initialize() - Final SQLite connection URL: {}", sqliteUrl);
-                    plugin.getLogger().info("Connecting to SQLite database: " + connectionString);
-                    config.setMaximumPoolSize(1); // SQLite doesn't support multiple connections well
-                    config.setConnectionTimeout(30000);
-                    config.setIdleTimeout(600000);
-                    config.setMaxLifetime(1800000);
-                } else if ("mysql".equals(databaseType)) {
-                    // Connection string already includes useSSL=false&autoReconnect=true from ConfigManager
-                    config.setJdbcUrl(connectionString);
-                    // Use relocated class name (relocated by shadowJar)
-                    config.setDriverClassName("org.clockworx.cotr.libs.mysql.jdbc.Driver");
-                    
-                    // Set username and password (required for MySQL)
-                    if (username != null && !username.isEmpty()) {
-                        config.setUsername(username);
-                        plugin.debug("DatabaseBankStorage.initialize() - MySQL username set: '{}'", username);
-                    } else {
-                        plugin.getLogger().warning("MySQL username is empty or null. Connection may fail.");
-                    }
-                    
-                    if (password != null) {
-                        config.setPassword(password);
-                        plugin.debug("DatabaseBankStorage.initialize() - MySQL password set: {}",
-                            password.isEmpty() ? "(empty)" : "***");
-                    } else {
-                        plugin.getLogger().warning("MySQL password is null. Connection may fail.");
-                    }
-                    
-                    // Log final connection URL for debugging (without password)
-                    String debugUrl = connectionString;
-                    if (username != null && !username.isEmpty()) {
-                        debugUrl = debugUrl.replaceFirst("jdbc:mysql://", 
-                            "jdbc:mysql://" + username + "@");
-                    }
-                    plugin.debug("DatabaseBankStorage.initialize() - Final MySQL connection URL: {}", debugUrl);
-                    plugin.getLogger().info("Connecting to MySQL database: " + 
-                        connectionString.replaceFirst("jdbc:mysql://", "").split("\\?")[0]);
-                    
-                    config.setMaximumPoolSize(10);
-                    config.setConnectionTimeout(30000);
-                    config.setIdleTimeout(600000);
-                    config.setMaxLifetime(1800000);
-                } else {
-                    throw new IllegalArgumentException("Unsupported database type: " + databaseType);
-                }
-                
-                dataSource = new HikariDataSource(config);
-                plugin.debug("DatabaseBankStorage.initialize() - Connection pool created");
-                
-                // Create schema
-                createSchema();
-                plugin.debug("DatabaseBankStorage.initialize() - Schema created/verified");
-                
-                plugin.getLogger().info("Database storage initialized: " + databaseType);
+                FlywayMigrator.migrate(
+                        plugin.getClass().getClassLoader(),
+                        plugin.getConfigManager().getDatabaseSettings(),
+                        plugin.getLogger());
+
+                sessions = new HibernateSessionManager(
+                        plugin.getConfigManager().getDatabaseSettings(),
+                        List.of(
+                                BankEntity.class,
+                                AccountMembershipEntity.class,
+                                DailyTransactionEntity.class,
+                                EmeraldRegionStatsEntity.class,
+                                EmeraldExchangeRateEntity.class),
+                        asyncExecutor,
+                        plugin.getLogger());
+
+                plugin.getLogger().info("Database storage initialized: "
+                        + plugin.getConfigManager().getDatabaseType());
+                plugin.debug("DatabaseBankStorage.initialize() - Schema migrated and session manager ready");
             } catch (Exception e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to initialize database storage", e);
+                plugin.getLogger().log(Level.SEVERE, "Failed to initialize database storage", e);
                 throw new RuntimeException("Database initialization failed", e);
             }
-        }, executorService);
+        }, asyncExecutor);
     }
-    
-    /**
-     * Creates the database schema if it doesn't exist.
-     */
-    private void createSchema() throws SQLException {
-        plugin.debug("DatabaseBankStorage.createSchema() - Creating database schema with prefix: '{}'", tablePrefix);
-        
-        String banksTable = getTableName("banks");
-        String membershipsTable = getTableName("account_memberships");
-        String dailyTransactionsTable = getTableName("daily_transactions");
-        String schemaVersionTable = getTableName("schema_version");
-        String emeraldStatsTable = getTableName("emerald_region_stats");
-        String emeraldRatesTable = getTableName("emerald_exchange_rates");
-        
-        String createTableSql;
-        if ("sqlite".equals(databaseType)) {
-            createTableSql = String.format("""
-                CREATE TABLE IF NOT EXISTS %s (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name VARCHAR(255) NOT NULL UNIQUE,
-                    owner_uuid VARCHAR(36) NOT NULL,
-                    world_name VARCHAR(255),
-                    balance DECIMAL(20, 2) NOT NULL DEFAULT 0,
-                    created_at BIGINT NOT NULL,
-                    updated_at BIGINT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_%s_owner ON %s(owner_uuid);
-                CREATE INDEX IF NOT EXISTS idx_%s_world ON %s(world_name);
-                CREATE INDEX IF NOT EXISTS idx_%s_owner_world ON %s(owner_uuid, world_name);
-                CREATE TABLE IF NOT EXISTS %s (
-                    account_name VARCHAR(255) NOT NULL,
-                    player_uuid VARCHAR(36) NOT NULL,
-                    role VARCHAR(20) NOT NULL,
-                    created_at BIGINT NOT NULL,
-                    PRIMARY KEY (account_name, player_uuid)
-                );
-                CREATE INDEX IF NOT EXISTS idx_%s_account ON %s(account_name);
-                CREATE INDEX IF NOT EXISTS idx_%s_player ON %s(player_uuid);
-                CREATE TABLE IF NOT EXISTS %s (
-                    account_name VARCHAR(255) NOT NULL,
-                    player_uuid VARCHAR(36) NOT NULL,
-                    date VARCHAR(10) NOT NULL,
-                    deposit_total INT NOT NULL DEFAULT 0,
-                    withdraw_total INT NOT NULL DEFAULT 0,
-                    PRIMARY KEY (account_name, player_uuid, date)
-                );
-                CREATE INDEX IF NOT EXISTS idx_%s_account_date ON %s(account_name, date);
-                CREATE INDEX IF NOT EXISTS idx_%s_player_date ON %s(player_uuid, date);
-                CREATE TABLE IF NOT EXISTS %s (
-                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                    mined_total INT NOT NULL DEFAULT 0,
-                    loot_total INT NOT NULL DEFAULT 0,
-                    mob_total INT NOT NULL DEFAULT 0,
-                    trading_total INT NOT NULL DEFAULT 0,
-                    bank_in_total INT NOT NULL DEFAULT 0,
-                    bank_out_total INT NOT NULL DEFAULT 0,
-                    updated_at BIGINT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS %s (
-                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                    current_rate INT NOT NULL,
-                    updated_at BIGINT NOT NULL
-                );
-                """, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable, banksTable,
-                membershipsTable, membershipsTable, membershipsTable, membershipsTable, membershipsTable,
-                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable,
-                emeraldStatsTable, emeraldRatesTable);
-        } else {
-            // MySQL
-            createTableSql = String.format("""
-                CREATE TABLE IF NOT EXISTS %s (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL UNIQUE,
-                    owner_uuid VARCHAR(36) NOT NULL,
-                    world_name VARCHAR(255),
-                    balance DECIMAL(20, 2) NOT NULL DEFAULT 0,
-                    created_at BIGINT NOT NULL,
-                    updated_at BIGINT NOT NULL,
-                    INDEX idx_%s_owner (owner_uuid),
-                    INDEX idx_%s_world (world_name),
-                    INDEX idx_%s_owner_world (owner_uuid, world_name)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                CREATE TABLE IF NOT EXISTS %s (
-                    account_name VARCHAR(255) NOT NULL,
-                    player_uuid VARCHAR(36) NOT NULL,
-                    role VARCHAR(20) NOT NULL,
-                    created_at BIGINT NOT NULL,
-                    PRIMARY KEY (account_name, player_uuid),
-                    INDEX idx_%s_account (account_name),
-                    INDEX idx_%s_player (player_uuid)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                CREATE TABLE IF NOT EXISTS %s (
-                    account_name VARCHAR(255) NOT NULL,
-                    player_uuid VARCHAR(36) NOT NULL,
-                    date VARCHAR(10) NOT NULL,
-                    deposit_total INT NOT NULL DEFAULT 0,
-                    withdraw_total INT NOT NULL DEFAULT 0,
-                    PRIMARY KEY (account_name, player_uuid, date),
-                    INDEX idx_%s_account_date (account_name, date),
-                    INDEX idx_%s_player_date (player_uuid, date)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                CREATE TABLE IF NOT EXISTS %s (
-                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                    mined_total INT NOT NULL DEFAULT 0,
-                    loot_total INT NOT NULL DEFAULT 0,
-                    mob_total INT NOT NULL DEFAULT 0,
-                    trading_total INT NOT NULL DEFAULT 0,
-                    bank_in_total INT NOT NULL DEFAULT 0,
-                    bank_out_total INT NOT NULL DEFAULT 0,
-                    updated_at BIGINT NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                CREATE TABLE IF NOT EXISTS %s (
-                    region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                    current_rate INT NOT NULL,
-                    updated_at BIGINT NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                """, banksTable, banksTable, banksTable, banksTable, membershipsTable, membershipsTable, membershipsTable,
-                dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable,
-                emeraldStatsTable, emeraldRatesTable);
-        }
-        
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
-            
-            // Execute each statement separately for SQLite compatibility
-            String[] statements = createTableSql.split(";");
-            for (String sql : statements) {
-                sql = sql.trim();
-                if (!sql.isEmpty()) {
-                    stmt.execute(sql);
-                }
-            }
-            
-            // Create schema version table
-            String schemaVersionSql = "sqlite".equals(databaseType) ?
-                String.format("""
-                CREATE TABLE IF NOT EXISTS %s (
-                    version INT NOT NULL PRIMARY KEY,
-                    applied_at BIGINT NOT NULL
-                );
-                """, schemaVersionTable) :
-                String.format("""
-                CREATE TABLE IF NOT EXISTS %s (
-                    version INT NOT NULL PRIMARY KEY,
-                    applied_at BIGINT NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                """, schemaVersionTable);
-            
-            stmt.execute(schemaVersionSql);
-            
-            // Check and update schema version
-            ensureSchemaVersion();
-        }
-    }
-    
-    /**
-     * Ensures the schema version is set correctly and runs migrations if needed.
-     */
-    private void ensureSchemaVersion() throws SQLException {
-        String schemaVersionTable = getTableName("schema_version");
-        try (Connection conn = dataSource.getConnection()) {
-            // Get current schema version
-            int currentVersion = 0;
-            try (PreparedStatement stmt = conn.prepareStatement(
-                    "SELECT MAX(version) as max_version FROM " + schemaVersionTable)) {
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next() && !rs.wasNull()) {
-                        currentVersion = rs.getInt("max_version");
-                    }
-                }
-            }
-            
-            plugin.debug("DatabaseBankStorage.ensureSchemaVersion() - Current version: {}, Target version: {}", 
-                currentVersion, CURRENT_SCHEMA_VERSION);
-            
-            // Run migrations if needed
-            if (currentVersion < CURRENT_SCHEMA_VERSION) {
-                runMigrations(conn, currentVersion, CURRENT_SCHEMA_VERSION);
-            }
-            
-            // Ensure current version is recorded
-            if (currentVersion < CURRENT_SCHEMA_VERSION) {
-                try (PreparedStatement insertStmt = conn.prepareStatement(
-                        "INSERT INTO " + schemaVersionTable + " (version, applied_at) VALUES (?, ?)")) {
-                    insertStmt.setInt(1, CURRENT_SCHEMA_VERSION);
-                    insertStmt.setLong(2, System.currentTimeMillis());
-                    insertStmt.executeUpdate();
-                    plugin.debug("DatabaseBankStorage.ensureSchemaVersion() - Schema version {} recorded", CURRENT_SCHEMA_VERSION);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Runs database migrations from one version to another.
-     * 
-     * @param conn The database connection
-     * @param fromVersion The current schema version
-     * @param toVersion The target schema version
-     */
-    private void runMigrations(Connection conn, int fromVersion, int toVersion) throws SQLException {
-        plugin.debug("DatabaseBankStorage.runMigrations() - Migrating from version {} to {}", fromVersion, toVersion);
-        
-        // Migration from version 1 to 2: Add daily_transactions table
-        if (fromVersion < 2 && toVersion >= 2) {
-            plugin.getLogger().info("Running database migration: version 1 -> 2 (adding daily_transactions table)");
-            
-            String dailyTransactionsTable = getTableName("daily_transactions");
-            String createTableSql;
-            
-            if ("sqlite".equals(databaseType)) {
-                createTableSql = String.format("""
-                    CREATE TABLE IF NOT EXISTS %s (
-                        account_name VARCHAR(255) NOT NULL,
-                        player_uuid VARCHAR(36) NOT NULL,
-                        date VARCHAR(10) NOT NULL,
-                        deposit_total INT NOT NULL DEFAULT 0,
-                        withdraw_total INT NOT NULL DEFAULT 0,
-                        PRIMARY KEY (account_name, player_uuid, date)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_%s_account_date ON %s(account_name, date);
-                    CREATE INDEX IF NOT EXISTS idx_%s_player_date ON %s(player_uuid, date);
-                    """, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable, 
-                    dailyTransactionsTable, dailyTransactionsTable);
-            } else {
-                createTableSql = String.format("""
-                    CREATE TABLE IF NOT EXISTS %s (
-                        account_name VARCHAR(255) NOT NULL,
-                        player_uuid VARCHAR(36) NOT NULL,
-                        date VARCHAR(10) NOT NULL,
-                        deposit_total INT NOT NULL DEFAULT 0,
-                        withdraw_total INT NOT NULL DEFAULT 0,
-                        PRIMARY KEY (account_name, player_uuid, date),
-                        INDEX idx_%s_account_date (account_name, date),
-                        INDEX idx_%s_player_date (player_uuid, date)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                    """, dailyTransactionsTable, dailyTransactionsTable, dailyTransactionsTable);
-            }
-            
-            try (Statement stmt = conn.createStatement()) {
-                String[] statements = createTableSql.split(";");
-                for (String sql : statements) {
-                    sql = sql.trim();
-                    if (!sql.isEmpty()) {
-                        stmt.execute(sql);
-                    }
-                }
-                plugin.getLogger().info("Migration 1->2 completed successfully");
-            }
-        }
-        
-        // Migration from version 2 to 3: Add emerald exchange tracking tables
-        if (fromVersion < 3 && toVersion >= 3) {
-            plugin.getLogger().info("Running database migration: version 2 -> 3 (adding emerald exchange tables)");
-            
-            String emeraldStatsTable = getTableName("emerald_region_stats");
-            String emeraldRatesTable = getTableName("emerald_exchange_rates");
-            String createTableSql;
-            
-            if ("sqlite".equals(databaseType)) {
-                createTableSql = String.format("""
-                    CREATE TABLE IF NOT EXISTS %s (
-                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                        mined_total INT NOT NULL DEFAULT 0,
-                        loot_total INT NOT NULL DEFAULT 0,
-                        mob_total INT NOT NULL DEFAULT 0,
-                        trading_total INT NOT NULL DEFAULT 0,
-                        bank_in_total INT NOT NULL DEFAULT 0,
-                        bank_out_total INT NOT NULL DEFAULT 0,
-                        updated_at BIGINT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS %s (
-                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                        current_rate INT NOT NULL,
-                        updated_at BIGINT NOT NULL
-                    );
-                    """, emeraldStatsTable, emeraldRatesTable);
-            } else {
-                createTableSql = String.format("""
-                    CREATE TABLE IF NOT EXISTS %s (
-                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                        mined_total INT NOT NULL DEFAULT 0,
-                        loot_total INT NOT NULL DEFAULT 0,
-                        mob_total INT NOT NULL DEFAULT 0,
-                        trading_total INT NOT NULL DEFAULT 0,
-                        bank_in_total INT NOT NULL DEFAULT 0,
-                        bank_out_total INT NOT NULL DEFAULT 0,
-                        updated_at BIGINT NOT NULL
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                    CREATE TABLE IF NOT EXISTS %s (
-                        region_id VARCHAR(255) NOT NULL PRIMARY KEY,
-                        current_rate INT NOT NULL,
-                        updated_at BIGINT NOT NULL
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                    """, emeraldStatsTable, emeraldRatesTable);
-            }
-            
-            try (Statement stmt = conn.createStatement()) {
-                String[] statements = createTableSql.split(";");
-                for (String sql : statements) {
-                    sql = sql.trim();
-                    if (!sql.isEmpty()) {
-                        stmt.execute(sql);
-                    }
-                }
-                plugin.getLogger().info("Migration 2->3 completed successfully");
-            }
-        }
-    }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Void> shutdown() {
         return CompletableFuture.runAsync(() -> {
             plugin.debug("DatabaseBankStorage.shutdown() - Shutting down database storage");
-            
-            if (dataSource != null) {
-                dataSource.close();
-                plugin.debug("DatabaseBankStorage.shutdown() - Connection pool closed");
+            if (sessions != null) {
+                sessions.shutdown();
             }
-            
-            if (executorService != null) {
-                executorService.shutdown();
-                plugin.debug("DatabaseBankStorage.shutdown() - Executor service shut down");
-            }
-        });
+        }, asyncExecutor);
     }
-    
+
     @Override
     @NotNull
-    public CompletableFuture<Boolean> createBank(@NotNull String name, 
+    public CompletableFuture<Boolean> createBank(@NotNull String name,
                                                  @NotNull UUID ownerUuid,
                                                  @Nullable String worldName,
                                                  @NotNull BigDecimal initialBalance) {
-        return CompletableFuture.supplyAsync(() -> {
-            plugin.debug("DatabaseBankStorage.createBank() - name={}, owner={}, world={}, balance={}", 
-                name, ownerUuid, worldName, initialBalance);
-            
-            String banksTable = getTableName("banks");
-            String sql = "INSERT INTO " + banksTable + " (name, owner_uuid, world_name, balance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, name);
-                stmt.setString(2, ownerUuid.toString());
-                stmt.setString(3, worldName);
-                stmt.setBigDecimal(4, initialBalance);
-                long now = System.currentTimeMillis();
-                stmt.setLong(5, now);
-                stmt.setLong(6, now);
-                
-                int rows = stmt.executeUpdate();
-                boolean created = rows > 0;
-                plugin.debug("DatabaseBankStorage.createBank() - Bank created: {}", created);
-                return created;
-            } catch (SQLException e) {
-                // Check if it's a duplicate key error
-                if (e.getErrorCode() == 19 || e.getSQLState().equals("23505") || 
-                    e.getMessage().contains("UNIQUE constraint") || e.getMessage().contains("Duplicate entry")) {
-                    plugin.debug("DatabaseBankStorage.createBank() - Bank already exists: {}", name);
-                    return false;
-                }
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to create bank: " + name, e);
-                throw new RuntimeException("Failed to create bank", e);
+        return sessions.executeTransaction(session -> {
+            plugin.debug("DatabaseBankStorage.createBank() - name={}, owner={}, world={}, balance={}",
+                    name, ownerUuid, worldName, initialBalance);
+
+            long now = System.currentTimeMillis();
+            BankEntity entity = new BankEntity(
+                    name,
+                    ownerUuid.toString(),
+                    worldName,
+                    initialBalance,
+                    now,
+                    now);
+            try {
+                session.persist(entity);
+                plugin.debug("DatabaseBankStorage.createBank() - Bank created: true");
+                return true;
+            } catch (ConstraintViolationException e) {
+                plugin.debug("DatabaseBankStorage.createBank() - Bank already exists: {}", name);
+                return false;
             }
-        }, executorService);
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Optional<BankRecord>> loadBank(@NotNull String name) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load bank: " + name, session -> {
             plugin.debug("DatabaseBankStorage.loadBank() - name={}", name);
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name, owner_uuid, world_name, balance, created_at, updated_at FROM " + banksTable + " WHERE name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, name);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        BankRecord record = mapResultSetToRecord(rs);
-                        plugin.debug("DatabaseBankStorage.loadBank() - Bank found: {}", record);
-                        return Optional.of(record);
-                    } else {
-                        plugin.debug("DatabaseBankStorage.loadBank() - Bank not found: {}", name);
-                        return Optional.empty();
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load bank: " + name, e);
-                throw new RuntimeException("Failed to load bank", e);
+
+            BankEntity entity = session.createQuery(
+                            "FROM BankEntity WHERE name = :name", BankEntity.class)
+                    .setParameter("name", name)
+                    .uniqueResult();
+
+            if (entity == null) {
+                plugin.debug("DatabaseBankStorage.loadBank() - Bank not found: {}", name);
+                return Optional.empty();
             }
-        }, executorService);
+
+            BankRecord record = toBankRecord(entity);
+            plugin.debug("DatabaseBankStorage.loadBank() - Bank found: {}", record);
+            return Optional.of(record);
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Optional<BankRecord>> loadBankByOwner(@NotNull UUID ownerUuid) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load bank by owner: " + ownerUuid, session -> {
             plugin.debug("DatabaseBankStorage.loadBankByOwner() - owner={}, world=null", ownerUuid);
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name, owner_uuid, world_name, balance, created_at, updated_at FROM " + banksTable + " WHERE owner_uuid = ? AND world_name IS NULL LIMIT 1";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, ownerUuid.toString());
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        BankRecord record = mapResultSetToRecord(rs);
-                        plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank found: {}", record);
-                        return Optional.of(record);
-                    } else {
-                        plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank not found for owner: {}", ownerUuid);
-                        return Optional.empty();
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load bank by owner: " + ownerUuid, e);
-                throw new RuntimeException("Failed to load bank by owner", e);
+
+            BankEntity entity = session.createQuery(
+                            "FROM BankEntity WHERE ownerUuid = :ownerUuid AND worldName IS NULL",
+                            BankEntity.class)
+                    .setParameter("ownerUuid", ownerUuid.toString())
+                    .setMaxResults(1)
+                    .uniqueResult();
+
+            if (entity == null) {
+                plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank not found for owner: {}", ownerUuid);
+                return Optional.empty();
             }
-        }, executorService);
+
+            BankRecord record = toBankRecord(entity);
+            plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank found: {}", record);
+            return Optional.of(record);
+        });
     }
-    
+
     @Override
     @NotNull
-    public CompletableFuture<Optional<BankRecord>> loadBankByOwner(@NotNull UUID ownerUuid, @NotNull String worldName) {
-        return CompletableFuture.supplyAsync(() -> {
+    public CompletableFuture<Optional<BankRecord>> loadBankByOwner(@NotNull UUID ownerUuid,
+                                                                  @NotNull String worldName) {
+        return executeRead("Failed to load bank by owner and world: " + ownerUuid + ", " + worldName, session -> {
             plugin.debug("DatabaseBankStorage.loadBankByOwner() - owner={}, world={}", ownerUuid, worldName);
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name, owner_uuid, world_name, balance, created_at, updated_at FROM " + banksTable + " WHERE owner_uuid = ? AND world_name = ? LIMIT 1";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, ownerUuid.toString());
-                stmt.setString(2, worldName);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        BankRecord record = mapResultSetToRecord(rs);
-                        plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank found: {}", record);
-                        return Optional.of(record);
-                    } else {
-                        plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank not found for owner: {}, world: {}", ownerUuid, worldName);
-                        return Optional.empty();
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load bank by owner and world: " + ownerUuid + ", " + worldName, e);
-                throw new RuntimeException("Failed to load bank by owner and world", e);
+
+            BankEntity entity = session.createQuery(
+                            "FROM BankEntity WHERE ownerUuid = :ownerUuid AND worldName = :worldName",
+                            BankEntity.class)
+                    .setParameter("ownerUuid", ownerUuid.toString())
+                    .setParameter("worldName", worldName)
+                    .setMaxResults(1)
+                    .uniqueResult();
+
+            if (entity == null) {
+                plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank not found for owner: {}, world: {}",
+                        ownerUuid, worldName);
+                return Optional.empty();
             }
-        }, executorService);
+
+            BankRecord record = toBankRecord(entity);
+            plugin.debug("DatabaseBankStorage.loadBankByOwner() - Bank found: {}", record);
+            return Optional.of(record);
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<List<BankRecord>> loadAllBanks() {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load all banks", session -> {
             plugin.debug("DatabaseBankStorage.loadAllBanks() - Loading all banks");
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name, owner_uuid, world_name, balance, created_at, updated_at FROM " + banksTable;
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql);
-                 ResultSet rs = stmt.executeQuery()) {
-                
-                List<BankRecord> records = new ArrayList<>();
-                while (rs.next()) {
-                    records.add(mapResultSetToRecord(rs));
-                }
-                
-                plugin.debug("DatabaseBankStorage.loadAllBanks() - Loaded {} banks", records.size());
-                return records;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load all banks", e);
-                throw new RuntimeException("Failed to load all banks", e);
+
+            List<BankEntity> entities = session.createQuery("FROM BankEntity", BankEntity.class).list();
+            List<BankRecord> records = new ArrayList<>(entities.size());
+            for (BankEntity entity : entities) {
+                records.add(toBankRecord(entity));
             }
-        }, executorService);
+
+            plugin.debug("DatabaseBankStorage.loadAllBanks() - Loaded {} banks", records.size());
+            return records;
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<List<BankRecord>> loadBanksByWorld(@NotNull String worldName) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load banks by world: " + worldName, session -> {
             plugin.debug("DatabaseBankStorage.loadBanksByWorld() - world={}", worldName);
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name, owner_uuid, world_name, balance, created_at, updated_at FROM " + banksTable + " WHERE world_name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, worldName);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    List<BankRecord> records = new ArrayList<>();
-                    while (rs.next()) {
-                        records.add(mapResultSetToRecord(rs));
-                    }
-                    
-                    plugin.debug("DatabaseBankStorage.loadBanksByWorld() - Loaded {} banks for world: {}", records.size(), worldName);
-                    return records;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load banks by world: " + worldName, e);
-                throw new RuntimeException("Failed to load banks by world", e);
+
+            List<BankEntity> entities = session.createQuery(
+                            "FROM BankEntity WHERE worldName = :worldName", BankEntity.class)
+                    .setParameter("worldName", worldName)
+                    .list();
+
+            List<BankRecord> records = new ArrayList<>(entities.size());
+            for (BankEntity entity : entities) {
+                records.add(toBankRecord(entity));
             }
-        }, executorService);
+
+            plugin.debug("DatabaseBankStorage.loadBanksByWorld() - Loaded {} banks for world: {}",
+                    records.size(), worldName);
+            return records;
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Boolean> updateBalance(@NotNull String name, @NotNull BigDecimal newBalance) {
-        return CompletableFuture.supplyAsync(() -> {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.updateBalance() - name={}, newBalance={}", name, newBalance);
-            
-            String banksTable = getTableName("banks");
-            String sql = "UPDATE " + banksTable + " SET balance = ?, updated_at = ? WHERE name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setBigDecimal(1, newBalance);
-                stmt.setLong(2, System.currentTimeMillis());
-                stmt.setString(3, name);
-                
-                int rows = stmt.executeUpdate();
-                boolean updated = rows > 0;
-                plugin.debug("DatabaseBankStorage.updateBalance() - Balance updated: {}", updated);
-                return updated;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update balance for bank: " + name, e);
-                throw new RuntimeException("Failed to update balance", e);
-            }
-        }, executorService);
+
+            int rows = session.createMutationQuery(
+                            "UPDATE BankEntity SET balance = :balance, updatedAt = :updatedAt WHERE name = :name")
+                    .setParameter("balance", newBalance)
+                    .setParameter("updatedAt", System.currentTimeMillis())
+                    .setParameter("name", name)
+                    .executeUpdate();
+
+            boolean updated = rows > 0;
+            plugin.debug("DatabaseBankStorage.updateBalance() - Balance updated: {}", updated);
+            return updated;
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Boolean> deleteBank(@NotNull String name) {
-        return CompletableFuture.supplyAsync(() -> {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.deleteBank() - name={}", name);
-            
-            String banksTable = getTableName("banks");
-            String sql = "DELETE FROM " + banksTable + " WHERE name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, name);
-                
-                int rows = stmt.executeUpdate();
-                boolean deleted = rows > 0;
-                plugin.debug("DatabaseBankStorage.deleteBank() - Bank deleted: {}", deleted);
-                return deleted;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to delete bank: " + name, e);
-                throw new RuntimeException("Failed to delete bank", e);
-            }
-        }, executorService);
+
+            int rows = session.createMutationQuery("DELETE FROM BankEntity WHERE name = :name")
+                    .setParameter("name", name)
+                    .executeUpdate();
+
+            boolean deleted = rows > 0;
+            plugin.debug("DatabaseBankStorage.deleteBank() - Bank deleted: {}", deleted);
+            return deleted;
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Boolean> bankExists(@NotNull String name) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to check if bank exists: " + name, session -> {
             plugin.debug("DatabaseBankStorage.bankExists() - name={}", name);
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT 1 FROM " + banksTable + " WHERE name = ? LIMIT 1";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, name);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    boolean exists = rs.next();
-                    plugin.debug("DatabaseBankStorage.bankExists() - Bank exists: {}", exists);
-                    return exists;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to check if bank exists: " + name, e);
-                throw new RuntimeException("Failed to check if bank exists", e);
-            }
-        }, executorService);
+
+            Long count = session.createQuery(
+                            "SELECT COUNT(b) FROM BankEntity b WHERE b.name = :name", Long.class)
+                    .setParameter("name", name)
+                    .uniqueResult();
+
+            boolean exists = count != null && count > 0;
+            plugin.debug("DatabaseBankStorage.bankExists() - Bank exists: {}", exists);
+            return exists;
+        });
     }
-    
+
     @Override
     @NotNull
     public CompletableFuture<Set<String>> getAllBankNames() {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to get all bank names", session -> {
             plugin.debug("DatabaseBankStorage.getAllBankNames() - Loading all bank names");
-            
-            String banksTable = getTableName("banks");
-            String sql = "SELECT name FROM " + banksTable;
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql);
-                 ResultSet rs = stmt.executeQuery()) {
-                
-                Set<String> names = new HashSet<>();
-                while (rs.next()) {
-                    names.add(rs.getString("name"));
-                }
-                
-                plugin.debug("DatabaseBankStorage.getAllBankNames() - Loaded {} bank names", names.size());
-                return names;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to get all bank names", e);
-                throw new RuntimeException("Failed to get all bank names", e);
-            }
-        }, executorService);
+
+            List<String> names = session.createQuery("SELECT b.name FROM BankEntity b", String.class).list();
+            Set<String> nameSet = new HashSet<>(names);
+
+            plugin.debug("DatabaseBankStorage.getAllBankNames() - Loaded {} bank names", nameSet.size());
+            return nameSet;
+        });
     }
-    
+
     // ========== Account Membership Methods ==========
-    
+
     /**
      * Creates a membership record in the database.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @param role The account role
@@ -786,254 +319,170 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Boolean> createMembership(@NotNull String accountName,
-                                                        @NotNull UUID playerUuid,
-                                                        @NotNull String role,
-                                                        long createdAt) {
-        return CompletableFuture.supplyAsync(() -> {
-            plugin.debug("DatabaseBankStorage.createMembership() - account={}, player={}, role={}", 
-                accountName, playerUuid, role);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "INSERT INTO " + membershipsTable + " (account_name, player_uuid, role, created_at) VALUES (?, ?, ?, ?)";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                stmt.setString(2, playerUuid.toString());
-                stmt.setString(3, role);
-                stmt.setLong(4, createdAt);
-                
-                int rows = stmt.executeUpdate();
-                boolean created = rows > 0;
-                plugin.debug("DatabaseBankStorage.createMembership() - Membership created: {}", created);
-                return created;
-            } catch (SQLException e) {
-                // Check if it's a duplicate key error
-                if (e.getErrorCode() == 19 || e.getSQLState().equals("23505") || 
-                    e.getMessage().contains("UNIQUE constraint") || e.getMessage().contains("Duplicate entry")) {
-                    plugin.debug("DatabaseBankStorage.createMembership() - Membership already exists");
-                    return false;
-                }
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to create membership", e);
-                throw new RuntimeException("Failed to create membership", e);
+                                                       @NotNull UUID playerUuid,
+                                                       @NotNull String role,
+                                                       long createdAt) {
+        return sessions.executeTransaction(session -> {
+            plugin.debug("DatabaseBankStorage.createMembership() - account={}, player={}, role={}",
+                    accountName, playerUuid, role);
+
+            AccountMembershipEntity entity = new AccountMembershipEntity(
+                    accountName,
+                    playerUuid.toString(),
+                    role,
+                    createdAt);
+            try {
+                session.persist(entity);
+                plugin.debug("DatabaseBankStorage.createMembership() - Membership created: true");
+                return true;
+            } catch (ConstraintViolationException e) {
+                plugin.debug("DatabaseBankStorage.createMembership() - Membership already exists");
+                return false;
             }
-        }, executorService);
+        });
     }
-    
+
     /**
      * Deletes a membership record.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @return A CompletableFuture that completes with true if deleted, false if not found
      */
     @NotNull
     public CompletableFuture<Boolean> deleteMembership(@NotNull String accountName, @NotNull UUID playerUuid) {
-        return CompletableFuture.supplyAsync(() -> {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.deleteMembership() - account={}, player={}", accountName, playerUuid);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "DELETE FROM " + membershipsTable + " WHERE account_name = ? AND player_uuid = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                stmt.setString(2, playerUuid.toString());
-                
-                int rows = stmt.executeUpdate();
-                boolean deleted = rows > 0;
-                plugin.debug("DatabaseBankStorage.deleteMembership() - Membership deleted: {}", deleted);
-                return deleted;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to delete membership", e);
-                throw new RuntimeException("Failed to delete membership", e);
-            }
-        }, executorService);
+
+            int rows = session.createMutationQuery(
+                            "DELETE FROM AccountMembershipEntity "
+                                    + "WHERE accountName = :accountName AND playerUuid = :playerUuid")
+                    .setParameter("accountName", accountName)
+                    .setParameter("playerUuid", playerUuid.toString())
+                    .executeUpdate();
+
+            boolean deleted = rows > 0;
+            plugin.debug("DatabaseBankStorage.deleteMembership() - Membership deleted: {}", deleted);
+            return deleted;
+        });
     }
-    
+
     /**
      * Deletes all memberships for an account.
-     * 
+     *
      * @param accountName The account name
      * @return A CompletableFuture that completes with the number of memberships deleted
      */
     @NotNull
     public CompletableFuture<Integer> deleteAllMemberships(@NotNull String accountName) {
-        return CompletableFuture.supplyAsync(() -> {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.deleteAllMemberships() - account={}", accountName);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "DELETE FROM " + membershipsTable + " WHERE account_name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                
-                int rows = stmt.executeUpdate();
-                plugin.debug("DatabaseBankStorage.deleteAllMemberships() - Deleted {} memberships", rows);
-                return rows;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to delete all memberships", e);
-                throw new RuntimeException("Failed to delete all memberships", e);
-            }
-        }, executorService);
+
+            int rows = session.createMutationQuery(
+                            "DELETE FROM AccountMembershipEntity WHERE accountName = :accountName")
+                    .setParameter("accountName", accountName)
+                    .executeUpdate();
+
+            plugin.debug("DatabaseBankStorage.deleteAllMemberships() - Deleted {} memberships", rows);
+            return rows;
+        });
     }
-    
+
     /**
      * Loads all memberships for an account.
-     * 
+     *
      * @param accountName The account name
-     * @return A CompletableFuture that completes with a list of membership data (accountName, playerUuid, role, createdAt)
+     * @return A CompletableFuture that completes with a list of membership data
      */
     @NotNull
     public CompletableFuture<List<MembershipRecord>> loadMemberships(@NotNull String accountName) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load memberships", session -> {
             plugin.debug("DatabaseBankStorage.loadMemberships() - account={}", accountName);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "SELECT account_name, player_uuid, role, created_at FROM " + membershipsTable + " WHERE account_name = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    List<MembershipRecord> records = new ArrayList<>();
-                    while (rs.next()) {
-                        records.add(new MembershipRecord(
-                            rs.getString("account_name"),
-                            UUID.fromString(rs.getString("player_uuid")),
-                            rs.getString("role"),
-                            rs.getLong("created_at")
-                        ));
-                    }
-                    
-                    plugin.debug("DatabaseBankStorage.loadMemberships() - Loaded {} memberships", records.size());
-                    return records;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load memberships", e);
-                throw new RuntimeException("Failed to load memberships", e);
-            }
-        }, executorService);
+
+            List<AccountMembershipEntity> entities = session.createQuery(
+                            "FROM AccountMembershipEntity WHERE accountName = :accountName",
+                            AccountMembershipEntity.class)
+                    .setParameter("accountName", accountName)
+                    .list();
+
+            List<MembershipRecord> records = toMembershipRecords(entities);
+            plugin.debug("DatabaseBankStorage.loadMemberships() - Loaded {} memberships", records.size());
+            return records;
+        });
     }
-    
+
     /**
      * Loads all memberships from the database.
-     * 
+     *
      * @return A CompletableFuture that completes with a list of all membership records
      */
     @NotNull
     public CompletableFuture<List<MembershipRecord>> loadAllMemberships() {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load all memberships", session -> {
             plugin.debug("DatabaseBankStorage.loadAllMemberships() - Loading all memberships");
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "SELECT account_name, player_uuid, role, created_at FROM " + membershipsTable;
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql);
-                 ResultSet rs = stmt.executeQuery()) {
-                
-                List<MembershipRecord> records = new ArrayList<>();
-                while (rs.next()) {
-                    records.add(new MembershipRecord(
-                        rs.getString("account_name"),
-                        UUID.fromString(rs.getString("player_uuid")),
-                        rs.getString("role"),
-                        rs.getLong("created_at")
-                    ));
-                }
-                
-                plugin.debug("DatabaseBankStorage.loadAllMemberships() - Loaded {} memberships", records.size());
-                return records;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load all memberships", e);
-                throw new RuntimeException("Failed to load all memberships", e);
-            }
-        }, executorService);
+
+            List<AccountMembershipEntity> entities = session.createQuery(
+                            "FROM AccountMembershipEntity", AccountMembershipEntity.class)
+                    .list();
+
+            List<MembershipRecord> records = toMembershipRecords(entities);
+            plugin.debug("DatabaseBankStorage.loadAllMemberships() - Loaded {} memberships", records.size());
+            return records;
+        });
     }
-    
+
     /**
      * Loads all memberships for a player.
-     * 
+     *
      * @param playerUuid The player UUID
      * @return A CompletableFuture that completes with a list of membership data
      */
     @NotNull
     public CompletableFuture<List<MembershipRecord>> loadMembershipsByPlayer(@NotNull UUID playerUuid) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load memberships by player", session -> {
             plugin.debug("DatabaseBankStorage.loadMembershipsByPlayer() - player={}", playerUuid);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "SELECT account_name, player_uuid, role, created_at FROM " + membershipsTable + " WHERE player_uuid = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, playerUuid.toString());
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    List<MembershipRecord> records = new ArrayList<>();
-                    while (rs.next()) {
-                        records.add(new MembershipRecord(
-                            rs.getString("account_name"),
-                            UUID.fromString(rs.getString("player_uuid")),
-                            rs.getString("role"),
-                            rs.getLong("created_at")
-                        ));
-                    }
-                    
-                    plugin.debug("DatabaseBankStorage.loadMembershipsByPlayer() - Loaded {} memberships", records.size());
-                    return records;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load memberships by player", e);
-                throw new RuntimeException("Failed to load memberships by player", e);
-            }
-        }, executorService);
+
+            List<AccountMembershipEntity> entities = session.createQuery(
+                            "FROM AccountMembershipEntity WHERE playerUuid = :playerUuid",
+                            AccountMembershipEntity.class)
+                    .setParameter("playerUuid", playerUuid.toString())
+                    .list();
+
+            List<MembershipRecord> records = toMembershipRecords(entities);
+            plugin.debug("DatabaseBankStorage.loadMembershipsByPlayer() - Loaded {} memberships", records.size());
+            return records;
+        });
     }
-    
+
     /**
      * Checks if a membership exists.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @return A CompletableFuture that completes with true if exists, false otherwise
      */
     @NotNull
     public CompletableFuture<Boolean> membershipExists(@NotNull String accountName, @NotNull UUID playerUuid) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to check membership existence", session -> {
             plugin.debug("DatabaseBankStorage.membershipExists() - account={}, player={}", accountName, playerUuid);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "SELECT 1 FROM " + membershipsTable + " WHERE account_name = ? AND player_uuid = ? LIMIT 1";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                stmt.setString(2, playerUuid.toString());
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    boolean exists = rs.next();
-                    plugin.debug("DatabaseBankStorage.membershipExists() - Membership exists: {}", exists);
-                    return exists;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to check membership existence", e);
-                throw new RuntimeException("Failed to check membership existence", e);
-            }
-        }, executorService);
+
+            Long count = session.createQuery(
+                            "SELECT COUNT(m) FROM AccountMembershipEntity m "
+                                    + "WHERE m.accountName = :accountName AND m.playerUuid = :playerUuid",
+                            Long.class)
+                    .setParameter("accountName", accountName)
+                    .setParameter("playerUuid", playerUuid.toString())
+                    .uniqueResult();
+
+            boolean exists = count != null && count > 0;
+            plugin.debug("DatabaseBankStorage.membershipExists() - Membership exists: {}", exists);
+            return exists;
+        });
     }
-    
+
     /**
      * Updates a membership role.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @param newRole The new role
@@ -1041,38 +490,31 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Boolean> updateMembershipRole(@NotNull String accountName,
-                                                            @NotNull UUID playerUuid,
-                                                            @NotNull String newRole) {
-        return CompletableFuture.supplyAsync(() -> {
-            plugin.debug("DatabaseBankStorage.updateMembershipRole() - account={}, player={}, role={}", 
-                accountName, playerUuid, newRole);
-            
-            String membershipsTable = getTableName("account_memberships");
-            String sql = "UPDATE " + membershipsTable + " SET role = ? WHERE account_name = ? AND player_uuid = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, newRole);
-                stmt.setString(2, accountName);
-                stmt.setString(3, playerUuid.toString());
-                
-                int rows = stmt.executeUpdate();
-                boolean updated = rows > 0;
-                plugin.debug("DatabaseBankStorage.updateMembershipRole() - Role updated: {}", updated);
-                return updated;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update membership role", e);
-                throw new RuntimeException("Failed to update membership role", e);
-            }
-        }, executorService);
+                                                           @NotNull UUID playerUuid,
+                                                           @NotNull String newRole) {
+        return sessions.executeTransaction(session -> {
+            plugin.debug("DatabaseBankStorage.updateMembershipRole() - account={}, player={}, role={}",
+                    accountName, playerUuid, newRole);
+
+            int rows = session.createMutationQuery(
+                            "UPDATE AccountMembershipEntity SET role = :role "
+                                    + "WHERE accountName = :accountName AND playerUuid = :playerUuid")
+                    .setParameter("role", newRole)
+                    .setParameter("accountName", accountName)
+                    .setParameter("playerUuid", playerUuid.toString())
+                    .executeUpdate();
+
+            boolean updated = rows > 0;
+            plugin.debug("DatabaseBankStorage.updateMembershipRole() - Role updated: {}", updated);
+            return updated;
+        });
     }
-    
+
     // ========== Daily Transaction Limits Methods ==========
-    
+
     /**
      * Gets the daily transaction totals for a player and account on a specific date.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @param date The date in YYYY-MM-DD format
@@ -1080,51 +522,37 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Optional<DailyTransactionRecord>> getDailyTransactions(@NotNull String accountName,
-                                                                                     @NotNull UUID playerUuid,
-                                                                                     @NotNull String date) {
-        return CompletableFuture.supplyAsync(() -> {
-            plugin.debug("DatabaseBankStorage.getDailyTransactions() - account={}, player={}, date={}", 
-                accountName, playerUuid, date);
-            
-            String dailyTransactionsTable = getTableName("daily_transactions");
-            String sql = "SELECT account_name, player_uuid, date, deposit_total, withdraw_total FROM " + 
-                dailyTransactionsTable + " WHERE account_name = ? AND player_uuid = ? AND date = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, accountName);
-                stmt.setString(2, playerUuid.toString());
-                stmt.setString(3, date);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        DailyTransactionRecord record = new DailyTransactionRecord(
-                            rs.getString("account_name"),
-                            UUID.fromString(rs.getString("player_uuid")),
-                            rs.getString("date"),
-                            rs.getInt("deposit_total"),
-                            rs.getInt("withdraw_total")
-                        );
-                        plugin.debug("DatabaseBankStorage.getDailyTransactions() - Found record: deposit={}, withdraw={}", 
-                            record.getDepositTotal(), record.getWithdrawTotal());
-                        return Optional.of(record);
-                    } else {
-                        plugin.debug("DatabaseBankStorage.getDailyTransactions() - No record found");
-                        return Optional.empty();
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to get daily transactions", e);
-                throw new RuntimeException("Failed to get daily transactions", e);
+                                                                                    @NotNull UUID playerUuid,
+                                                                                    @NotNull String date) {
+        return executeRead("Failed to get daily transactions", session -> {
+            plugin.debug("DatabaseBankStorage.getDailyTransactions() - account={}, player={}, date={}",
+                    accountName, playerUuid, date);
+
+            DailyTransactionEntity entity = session.get(
+                    DailyTransactionEntity.class,
+                    new DailyTransactionEntity.PK(accountName, playerUuid.toString(), date));
+
+            if (entity == null) {
+                plugin.debug("DatabaseBankStorage.getDailyTransactions() - No record found");
+                return Optional.empty();
             }
-        }, executorService);
+
+            DailyTransactionRecord record = new DailyTransactionRecord(
+                    entity.getAccountName(),
+                    UUID.fromString(entity.getPlayerUuid()),
+                    entity.getDate(),
+                    entity.getDepositTotal(),
+                    entity.getWithdrawTotal());
+            plugin.debug("DatabaseBankStorage.getDailyTransactions() - Found record: deposit={}, withdraw={}",
+                    record.getDepositTotal(), record.getWithdrawTotal());
+            return Optional.of(record);
+        });
     }
-    
+
     /**
      * Updates the daily transaction totals for a player and account.
      * Creates a new record if one doesn't exist for the date.
-     * 
+     *
      * @param accountName The account name
      * @param playerUuid The player UUID
      * @param date The date in YYYY-MM-DD format
@@ -1134,62 +562,40 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Boolean> updateDailyTransactions(@NotNull String accountName,
-                                                               @NotNull UUID playerUuid,
-                                                               @NotNull String date,
-                                                               int depositAmount,
-                                                               int withdrawAmount) {
-        return CompletableFuture.supplyAsync(() -> {
-            plugin.debug("DatabaseBankStorage.updateDailyTransactions() - account={}, player={}, date={}, deposit={}, withdraw={}", 
-                accountName, playerUuid, date, depositAmount, withdrawAmount);
-            
-            String dailyTransactionsTable = getTableName("daily_transactions");
-            
-            // Try to update existing record first
-            String updateSql = "UPDATE " + dailyTransactionsTable + 
-                " SET deposit_total = deposit_total + ?, withdraw_total = withdraw_total + ? " +
-                " WHERE account_name = ? AND player_uuid = ? AND date = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(updateSql)) {
-                
-                stmt.setInt(1, depositAmount);
-                stmt.setInt(2, withdrawAmount);
-                stmt.setString(3, accountName);
-                stmt.setString(4, playerUuid.toString());
-                stmt.setString(5, date);
-                
-                int rows = stmt.executeUpdate();
-                
-                if (rows > 0) {
-                    plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Updated existing record");
-                    return true;
-                }
-                
-                // No existing record, create a new one
-                String insertSql = "INSERT INTO " + dailyTransactionsTable + 
-                    " (account_name, player_uuid, date, deposit_total, withdraw_total) VALUES (?, ?, ?, ?, ?)";
-                
-                try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
-                    insertStmt.setString(1, accountName);
-                    insertStmt.setString(2, playerUuid.toString());
-                    insertStmt.setString(3, date);
-                    insertStmt.setInt(4, depositAmount);
-                    insertStmt.setInt(5, withdrawAmount);
-                    
-                    int insertRows = insertStmt.executeUpdate();
-                    boolean inserted = insertRows > 0;
-                    plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Created new record: {}", inserted);
-                    return inserted;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update daily transactions", e);
-                throw new RuntimeException("Failed to update daily transactions", e);
+                                                              @NotNull UUID playerUuid,
+                                                              @NotNull String date,
+                                                              int depositAmount,
+                                                              int withdrawAmount) {
+        return sessions.executeTransaction(session -> {
+            plugin.debug("DatabaseBankStorage.updateDailyTransactions() - account={}, player={}, date={}, deposit={}, withdraw={}",
+                    accountName, playerUuid, date, depositAmount, withdrawAmount);
+
+            DailyTransactionEntity.PK pk = new DailyTransactionEntity.PK(
+                    accountName, playerUuid.toString(), date);
+            DailyTransactionEntity entity = session.get(DailyTransactionEntity.class, pk);
+
+            if (entity != null) {
+                entity.setDepositTotal(entity.getDepositTotal() + depositAmount);
+                entity.setWithdrawTotal(entity.getWithdrawTotal() + withdrawAmount);
+                session.merge(entity);
+                plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Updated existing record");
+                return true;
             }
-        }, executorService);
+
+            DailyTransactionEntity newEntity = new DailyTransactionEntity(
+                    accountName,
+                    playerUuid.toString(),
+                    date,
+                    depositAmount,
+                    withdrawAmount);
+            session.persist(newEntity);
+            plugin.debug("DatabaseBankStorage.updateDailyTransactions() - Created new record: true");
+            return true;
+        });
     }
-    
+
     // ========== Emerald Exchange Tracking Methods ==========
-    
+
     /**
      * Increments emerald tracking counters for a region.
      * All values are additive deltas (use 0 for fields you are not changing).
@@ -1205,69 +611,45 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Boolean> incrementEmeraldStats(@NotNull String regionId,
-                                                             int minedDelta,
-                                                             int lootDelta,
-                                                             int mobDelta,
-                                                             int tradingDelta,
-                                                             int bankInDelta,
-                                                             int bankOutDelta) {
-        return CompletableFuture.supplyAsync(() -> {
+                                                            int minedDelta,
+                                                            int lootDelta,
+                                                            int mobDelta,
+                                                            int tradingDelta,
+                                                            int bankInDelta,
+                                                            int bankOutDelta) {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.incrementEmeraldStats() - region={}, mined={}, loot={}, mob={}, trade={}, bankIn={}, bankOut={}",
-                regionId, minedDelta, lootDelta, mobDelta, tradingDelta, bankInDelta, bankOutDelta);
-            
-            String emeraldStatsTable = getTableName("emerald_region_stats");
+                    regionId, minedDelta, lootDelta, mobDelta, tradingDelta, bankInDelta, bankOutDelta);
+
             long now = System.currentTimeMillis();
-            String sql;
-            
-            if ("sqlite".equals(databaseType)) {
-                sql = "INSERT INTO " + emeraldStatsTable +
-                    " (region_id, mined_total, loot_total, mob_total, trading_total, bank_in_total, bank_out_total, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
-                    "ON CONFLICT(region_id) DO UPDATE SET " +
-                    "mined_total = mined_total + excluded.mined_total, " +
-                    "loot_total = loot_total + excluded.loot_total, " +
-                    "mob_total = mob_total + excluded.mob_total, " +
-                    "trading_total = trading_total + excluded.trading_total, " +
-                    "bank_in_total = bank_in_total + excluded.bank_in_total, " +
-                    "bank_out_total = bank_out_total + excluded.bank_out_total, " +
-                    "updated_at = excluded.updated_at";
+            EmeraldRegionStatsEntity entity = session.get(EmeraldRegionStatsEntity.class, regionId);
+
+            if (entity == null) {
+                entity = new EmeraldRegionStatsEntity(regionId);
+                entity.setMinedTotal(minedDelta);
+                entity.setLootTotal(lootDelta);
+                entity.setMobTotal(mobDelta);
+                entity.setTradingTotal(tradingDelta);
+                entity.setBankInTotal(bankInDelta);
+                entity.setBankOutTotal(bankOutDelta);
+                entity.setUpdatedAt(now);
+                session.persist(entity);
             } else {
-                sql = "INSERT INTO " + emeraldStatsTable +
-                    " (region_id, mined_total, loot_total, mob_total, trading_total, bank_in_total, bank_out_total, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
-                    "ON DUPLICATE KEY UPDATE " +
-                    "mined_total = mined_total + VALUES(mined_total), " +
-                    "loot_total = loot_total + VALUES(loot_total), " +
-                    "mob_total = mob_total + VALUES(mob_total), " +
-                    "trading_total = trading_total + VALUES(trading_total), " +
-                    "bank_in_total = bank_in_total + VALUES(bank_in_total), " +
-                    "bank_out_total = bank_out_total + VALUES(bank_out_total), " +
-                    "updated_at = VALUES(updated_at)";
+                entity.setMinedTotal(entity.getMinedTotal() + minedDelta);
+                entity.setLootTotal(entity.getLootTotal() + lootDelta);
+                entity.setMobTotal(entity.getMobTotal() + mobDelta);
+                entity.setTradingTotal(entity.getTradingTotal() + tradingDelta);
+                entity.setBankInTotal(entity.getBankInTotal() + bankInDelta);
+                entity.setBankOutTotal(entity.getBankOutTotal() + bankOutDelta);
+                entity.setUpdatedAt(now);
+                session.merge(entity);
             }
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, regionId);
-                stmt.setInt(2, minedDelta);
-                stmt.setInt(3, lootDelta);
-                stmt.setInt(4, mobDelta);
-                stmt.setInt(5, tradingDelta);
-                stmt.setInt(6, bankInDelta);
-                stmt.setInt(7, bankOutDelta);
-                stmt.setLong(8, now);
-                
-                int rows = stmt.executeUpdate();
-                boolean updated = rows > 0;
-                plugin.debug("DatabaseBankStorage.incrementEmeraldStats() - Updated: {}", updated);
-                return updated;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to update emerald stats for region: " + regionId, e);
-                throw new RuntimeException("Failed to update emerald stats", e);
-            }
-        }, executorService);
+
+            plugin.debug("DatabaseBankStorage.incrementEmeraldStats() - Updated: true");
+            return true;
+        });
     }
-    
+
     /**
      * Loads emerald region stats (returns zeroed totals if none exist).
      *
@@ -1276,41 +658,26 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<EmeraldRegionStats> getEmeraldRegionStats(@NotNull String regionId) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load emerald stats", session -> {
             plugin.debug("DatabaseBankStorage.getEmeraldRegionStats() - region={}", regionId);
-            
-            String emeraldStatsTable = getTableName("emerald_region_stats");
-            String sql = "SELECT region_id, mined_total, loot_total, mob_total, trading_total, " +
-                "bank_in_total, bank_out_total, updated_at FROM " + emeraldStatsTable + " WHERE region_id = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, regionId);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        return new EmeraldRegionStats(
-                            rs.getString("region_id"),
-                            rs.getInt("mined_total"),
-                            rs.getInt("loot_total"),
-                            rs.getInt("mob_total"),
-                            rs.getInt("trading_total"),
-                            rs.getInt("bank_in_total"),
-                            rs.getInt("bank_out_total"),
-                            rs.getLong("updated_at")
-                        );
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load emerald stats for region: " + regionId, e);
-                throw new RuntimeException("Failed to load emerald stats", e);
+
+            EmeraldRegionStatsEntity entity = session.get(EmeraldRegionStatsEntity.class, regionId);
+            if (entity == null) {
+                return EmeraldRegionStats.empty(regionId);
             }
-            
-            return EmeraldRegionStats.empty(regionId);
-        }, executorService);
+
+            return new EmeraldRegionStats(
+                    entity.getRegionId(),
+                    entity.getMinedTotal(),
+                    entity.getLootTotal(),
+                    entity.getMobTotal(),
+                    entity.getTradingTotal(),
+                    entity.getBankInTotal(),
+                    entity.getBankOutTotal(),
+                    entity.getUpdatedAt());
+        });
     }
-    
+
     /**
      * Stores the current exchange rate for a region.
      *
@@ -1320,45 +687,26 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Boolean> upsertEmeraldExchangeRate(@NotNull String regionId, int rate) {
-        return CompletableFuture.supplyAsync(() -> {
+        return sessions.executeTransaction(session -> {
             plugin.debug("DatabaseBankStorage.upsertEmeraldExchangeRate() - region={}, rate={}", regionId, rate);
-            
-            String emeraldRatesTable = getTableName("emerald_exchange_rates");
+
             long now = System.currentTimeMillis();
-            String sql;
-            
-            if ("sqlite".equals(databaseType)) {
-                sql = "INSERT INTO " + emeraldRatesTable +
-                    " (region_id, current_rate, updated_at) VALUES (?, ?, ?) " +
-                    "ON CONFLICT(region_id) DO UPDATE SET " +
-                    "current_rate = excluded.current_rate, " +
-                    "updated_at = excluded.updated_at";
+            EmeraldExchangeRateEntity entity = session.get(EmeraldExchangeRateEntity.class, regionId);
+
+            if (entity == null) {
+                entity = new EmeraldExchangeRateEntity(regionId, rate, now);
+                session.persist(entity);
             } else {
-                sql = "INSERT INTO " + emeraldRatesTable +
-                    " (region_id, current_rate, updated_at) VALUES (?, ?, ?) " +
-                    "ON DUPLICATE KEY UPDATE " +
-                    "current_rate = VALUES(current_rate), " +
-                    "updated_at = VALUES(updated_at)";
+                entity.setCurrentRate(rate);
+                entity.setUpdatedAt(now);
+                session.merge(entity);
             }
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, regionId);
-                stmt.setInt(2, rate);
-                stmt.setLong(3, now);
-                
-                int rows = stmt.executeUpdate();
-                boolean updated = rows > 0;
-                plugin.debug("DatabaseBankStorage.upsertEmeraldExchangeRate() - Updated: {}", updated);
-                return updated;
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to upsert exchange rate for region: " + regionId, e);
-                throw new RuntimeException("Failed to update exchange rate", e);
-            }
-        }, executorService);
+
+            plugin.debug("DatabaseBankStorage.upsertEmeraldExchangeRate() - Updated: true");
+            return true;
+        });
     }
-    
+
     /**
      * Loads the stored exchange rate for a region.
      *
@@ -1367,35 +715,21 @@ public class DatabaseBankStorage implements BankStorage {
      */
     @NotNull
     public CompletableFuture<Optional<EmeraldExchangeRateRecord>> getEmeraldExchangeRate(@NotNull String regionId) {
-        return CompletableFuture.supplyAsync(() -> {
+        return executeRead("Failed to load exchange rate", session -> {
             plugin.debug("DatabaseBankStorage.getEmeraldExchangeRate() - region={}", regionId);
-            
-            String emeraldRatesTable = getTableName("emerald_exchange_rates");
-            String sql = "SELECT region_id, current_rate, updated_at FROM " + emeraldRatesTable + " WHERE region_id = ?";
-            
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                
-                stmt.setString(1, regionId);
-                
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        return Optional.of(new EmeraldExchangeRateRecord(
-                            rs.getString("region_id"),
-                            rs.getInt("current_rate"),
-                            rs.getLong("updated_at")
-                        ));
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to load exchange rate for region: " + regionId, e);
-                throw new RuntimeException("Failed to load exchange rate", e);
+
+            EmeraldExchangeRateEntity entity = session.get(EmeraldExchangeRateEntity.class, regionId);
+            if (entity == null) {
+                return Optional.empty();
             }
-            
-            return Optional.empty();
-        }, executorService);
+
+            return Optional.of(new EmeraldExchangeRateRecord(
+                    entity.getRegionId(),
+                    entity.getCurrentRate(),
+                    entity.getUpdatedAt()));
+        });
     }
-    
+
     /**
      * Data class for daily transaction records.
      */
@@ -1405,30 +739,40 @@ public class DatabaseBankStorage implements BankStorage {
         private final String date;
         private final int depositTotal;
         private final int withdrawTotal;
-        
-        public DailyTransactionRecord(@NotNull String accountName, @NotNull UUID playerUuid, 
-                                     @NotNull String date, int depositTotal, int withdrawTotal) {
+
+        public DailyTransactionRecord(@NotNull String accountName, @NotNull UUID playerUuid,
+                                      @NotNull String date, int depositTotal, int withdrawTotal) {
             this.accountName = accountName;
             this.playerUuid = playerUuid;
             this.date = date;
             this.depositTotal = depositTotal;
             this.withdrawTotal = withdrawTotal;
         }
-        
+
         @NotNull
-        public String getAccountName() { return accountName; }
-        
+        public String getAccountName() {
+            return accountName;
+        }
+
         @NotNull
-        public UUID getPlayerUuid() { return playerUuid; }
-        
+        public UUID getPlayerUuid() {
+            return playerUuid;
+        }
+
         @NotNull
-        public String getDate() { return date; }
-        
-        public int getDepositTotal() { return depositTotal; }
-        
-        public int getWithdrawTotal() { return withdrawTotal; }
+        public String getDate() {
+            return date;
+        }
+
+        public int getDepositTotal() {
+            return depositTotal;
+        }
+
+        public int getWithdrawTotal() {
+            return withdrawTotal;
+        }
     }
-    
+
     /**
      * Data class for emerald region tracking totals.
      */
@@ -1441,7 +785,7 @@ public class DatabaseBankStorage implements BankStorage {
         private final int bankInTotal;
         private final int bankOutTotal;
         private final long updatedAt;
-        
+
         public EmeraldRegionStats(@NotNull String regionId,
                                   int minedTotal,
                                   int lootTotal,
@@ -1459,30 +803,46 @@ public class DatabaseBankStorage implements BankStorage {
             this.bankOutTotal = bankOutTotal;
             this.updatedAt = updatedAt;
         }
-        
+
         @NotNull
         public static EmeraldRegionStats empty(@NotNull String regionId) {
             return new EmeraldRegionStats(regionId, 0, 0, 0, 0, 0, 0, System.currentTimeMillis());
         }
-        
+
         @NotNull
-        public String getRegionId() { return regionId; }
-        
-        public int getMinedTotal() { return minedTotal; }
-        
-        public int getLootTotal() { return lootTotal; }
-        
-        public int getMobTotal() { return mobTotal; }
-        
-        public int getTradingTotal() { return tradingTotal; }
-        
-        public int getBankInTotal() { return bankInTotal; }
-        
-        public int getBankOutTotal() { return bankOutTotal; }
-        
-        public long getUpdatedAt() { return updatedAt; }
+        public String getRegionId() {
+            return regionId;
+        }
+
+        public int getMinedTotal() {
+            return minedTotal;
+        }
+
+        public int getLootTotal() {
+            return lootTotal;
+        }
+
+        public int getMobTotal() {
+            return mobTotal;
+        }
+
+        public int getTradingTotal() {
+            return tradingTotal;
+        }
+
+        public int getBankInTotal() {
+            return bankInTotal;
+        }
+
+        public int getBankOutTotal() {
+            return bankOutTotal;
+        }
+
+        public long getUpdatedAt() {
+            return updatedAt;
+        }
     }
-    
+
     /**
      * Data class for stored exchange rates.
      */
@@ -1490,21 +850,27 @@ public class DatabaseBankStorage implements BankStorage {
         private final String regionId;
         private final int currentRate;
         private final long updatedAt;
-        
+
         public EmeraldExchangeRateRecord(@NotNull String regionId, int currentRate, long updatedAt) {
             this.regionId = regionId;
             this.currentRate = currentRate;
             this.updatedAt = updatedAt;
         }
-        
+
         @NotNull
-        public String getRegionId() { return regionId; }
-        
-        public int getCurrentRate() { return currentRate; }
-        
-        public long getUpdatedAt() { return updatedAt; }
+        public String getRegionId() {
+            return regionId;
+        }
+
+        public int getCurrentRate() {
+            return currentRate;
+        }
+
+        public long getUpdatedAt() {
+            return updatedAt;
+        }
     }
-    
+
     /**
      * Data class for membership records.
      */
@@ -1513,39 +879,70 @@ public class DatabaseBankStorage implements BankStorage {
         private final UUID playerUuid;
         private final String role;
         private final long createdAt;
-        
-        public MembershipRecord(@NotNull String accountName, @NotNull UUID playerUuid, 
-                               @NotNull String role, long createdAt) {
+
+        public MembershipRecord(@NotNull String accountName, @NotNull UUID playerUuid,
+                                @NotNull String role, long createdAt) {
             this.accountName = accountName;
             this.playerUuid = playerUuid;
             this.role = role;
             this.createdAt = createdAt;
         }
-        
+
         @NotNull
-        public String getAccountName() { return accountName; }
-        
+        public String getAccountName() {
+            return accountName;
+        }
+
         @NotNull
-        public UUID getPlayerUuid() { return playerUuid; }
-        
+        public UUID getPlayerUuid() {
+            return playerUuid;
+        }
+
         @NotNull
-        public String getRole() { return role; }
-        
-        public long getCreatedAt() { return createdAt; }
+        public String getRole() {
+            return role;
+        }
+
+        public long getCreatedAt() {
+            return createdAt;
+        }
     }
-    
+
     /**
-     * Maps a ResultSet row to a BankRecord.
+     * Executes a read-only database operation asynchronously.
      */
+    private <T> CompletableFuture<T> executeRead(String errorMessage, HibernateSessionManager.TransactionFunction<T> function) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Session session = sessions.getSessionFactory().openSession()) {
+                return function.apply(session);
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.SEVERE, errorMessage, e);
+                throw new RuntimeException(errorMessage, e);
+            }
+        }, asyncExecutor);
+    }
+
     @NotNull
-    private BankRecord mapResultSetToRecord(@NotNull ResultSet rs) throws SQLException {
-        String name = rs.getString("name");
-        UUID ownerUuid = UUID.fromString(rs.getString("owner_uuid"));
-        String worldName = rs.getString("world_name");
-        BigDecimal balance = rs.getBigDecimal("balance");
-        long createdAt = rs.getLong("created_at");
-        long updatedAt = rs.getLong("updated_at");
-        
-        return new BankRecord(name, ownerUuid, worldName, balance, createdAt, updatedAt);
+    private BankRecord toBankRecord(@NotNull BankEntity entity) {
+        return new BankRecord(
+                entity.getName(),
+                UUID.fromString(entity.getOwnerUuid()),
+                entity.getWorldName(),
+                entity.getBalance(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt());
+    }
+
+    @NotNull
+    private List<MembershipRecord> toMembershipRecords(@NotNull List<AccountMembershipEntity> entities) {
+        List<MembershipRecord> records = new ArrayList<>(entities.size());
+        for (AccountMembershipEntity entity : entities) {
+            records.add(new MembershipRecord(
+                    entity.getAccountName(),
+                    UUID.fromString(entity.getPlayerUuid()),
+                    entity.getRole(),
+                    entity.getCreatedAt()));
+        }
+        return records;
     }
 }

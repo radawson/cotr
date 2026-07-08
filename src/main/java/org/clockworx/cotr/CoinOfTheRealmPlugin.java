@@ -144,21 +144,10 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
             getLogger().warning("Bank storage type '" + storageType + "' is not yet supported. Using database.");
         }
         
-        String databaseType = configManager.getDatabaseType();
-        String connectionString = configManager.getDatabaseConnectionString();
-        String tablePrefix = configManager.getDatabasePrefix();
-        String username = "mysql".equals(databaseType) ? configManager.getDatabaseUsername() : null;
-        String password = "mysql".equals(databaseType) ? configManager.getDatabasePassword() : null;
-        
-        debug("CoinOfTheRealmPlugin.initializeBankStorage() - Database type: {}, connection: {}, prefix: '{}'", 
-            databaseType, connectionString, tablePrefix);
-        if ("mysql".equals(databaseType)) {
-            debug("CoinOfTheRealmPlugin.initializeBankStorage() - MySQL username: '{}', password: {}",
-                username != null ? username : "(null)",
-                password != null ? (password.isEmpty() ? "(empty)" : "***") : "(null)");
-        }
-        
-        databaseBankStorage = new DatabaseBankStorage(this, databaseType, connectionString, tablePrefix, username, password);
+        debug("CoinOfTheRealmPlugin.initializeBankStorage() - Database type: {}, prefix: '{}'",
+            configManager.getDatabaseType(), configManager.getDatabasePrefix());
+
+        databaseBankStorage = new DatabaseBankStorage(this);
         bankStorage = databaseBankStorage; // Also store as interface
         
         // Initialize storage synchronously (wait for it to complete)
