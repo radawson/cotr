@@ -15,7 +15,7 @@ softdepend:
 commands:
   cotr:
     description: Coin of the Realm command
-    usage: /<command> <drop|give|deposit|withdraw|balance|rate|request|account|info> [arguments]
+    usage: /<command> <drop|give|deposit|withdraw|balance|rate|request|account|info|reload> [arguments]
     aliases: [coin, coins]
     permission: cotr.command.use
     permission-message: You do not have permission to use this command.
@@ -41,6 +41,7 @@ permissions:
       cotr.command.account: true
       cotr.command.account.manage: true
       cotr.command.info: true
+      cotr.command.reload: true
   cotr.command.use:
     description: Use the /cotr command
     default: op
@@ -73,4 +74,7 @@ permissions:
     default: true
   cotr.command.info:
     description: Use /cotr info command (admin)
+    default: op
+  cotr.command.reload:
+    description: Use /cotr reload command (admin)
     default: op

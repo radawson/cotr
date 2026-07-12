@@ -77,6 +77,8 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
                 return handleAccount(sender, args);
             case "info":
                 return handleInfo(sender, args);
+            case "reload":
+                return handleReload(sender, args);
             default:
                 plugin.debug("CotrCommand.onCommand() - Unknown subcommand: {}", subcommand);
                 sender.sendMessage(Component.text("Unknown subcommand: " + subcommand, NamedTextColor.RED));
@@ -102,6 +104,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Component.text("  request <player> [account] <amount> - Request coins from player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  account <create|list|members|add|remove|delete> - Manage accounts", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  info - Admin: View plugin information", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  reload - Admin: Reload config.yml / coin.yml from disk", NamedTextColor.GRAY));
     }
     
     /**
@@ -958,6 +961,27 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
     /**
      * Handles /cotr info (admin command)
      */
+    /**
+     * Reloads config.yml and coin.yml from disk (including the resource-pack URL/hash),
+     * so config changes take effect without a full server restart.
+     */
+    private boolean handleReload(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (!sender.hasPermission("cotr.command.reload")) {
+            sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
+            return true;
+        }
+
+        CoinOfTheRealmPlugin plugin = CoinOfTheRealmPlugin.getInstance();
+        boolean ok = plugin.getConfigManager().reload();
+        if (ok) {
+            sender.sendMessage(Component.text("Coin of the Realm configuration reloaded.", NamedTextColor.GREEN));
+            sender.sendMessage(Component.text("(resource-pack URL/hash re-read; joining players will get the current pack)", NamedTextColor.GRAY));
+        } else {
+            sender.sendMessage(Component.text("Reload failed — see the server console for details.", NamedTextColor.RED));
+        }
+        return true;
+    }
+
     private boolean handleInfo(@NotNull CommandSender sender, @NotNull String[] args) {
         if (!sender.hasPermission("cotr.command.info")) {
             sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
@@ -1006,6 +1030,7 @@ public class CotrCommand implements CommandExecutor, TabCompleter {
             completions.add("request");
             completions.add("account");
             completions.add("info");
+            completions.add("reload");
             return filterCompletions(completions, args[0]);
         }
         
