@@ -34,6 +34,16 @@ public class DatabaseBankStorage implements BankStorage {
     private final CoinOfTheRealmPlugin plugin;
     private HibernateSessionManager sessions;
     private final Executor asyncExecutor;
+    // Dedicated daemon pool for ALL DB work. We deliberately do NOT use Bukkit's async scheduler:
+    // its async tasks are only dispatched once the server starts ticking (after onEnable), so any
+    // DB future joined during plugin enable (storage init, membership migration, ...) deadlocks the
+    // main thread. A plain executor runs immediately at both enable- and run-time.
+    private final java.util.concurrent.ExecutorService dbPool =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread th = new Thread(r, "cotr-db");
+                th.setDaemon(true);
+                return th;
+            });
 
     /**
      * Creates a new DatabaseBankStorage.
@@ -43,14 +53,10 @@ public class DatabaseBankStorage implements BankStorage {
     public DatabaseBankStorage(@NotNull CoinOfTheRealmPlugin plugin) {
         this.plugin = plugin;
         this.asyncExecutor = task -> {
-            if (plugin.isEnabled()) {
-                try {
-                    plugin.getServer().getScheduler().runTaskAsynchronously(plugin, task);
-                } catch (IllegalPluginAccessException e) {
-                    task.run();
-                }
-            } else {
-                task.run();
+            try {
+                dbPool.execute(task);
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                task.run(); // pool shut down during disable — run inline
             }
         };
     }
@@ -85,7 +91,9 @@ public class DatabaseBankStorage implements BankStorage {
                 plugin.getLogger().log(Level.SEVERE, "Failed to initialize database storage", e);
                 throw new RuntimeException("Database initialization failed", e);
             }
-        }, asyncExecutor);
+        }); // run on the common ForkJoinPool, NOT `asyncExecutor`: during onEnable that executor
+            // routes to the Bukkit scheduler, which cannot drain the task while the main thread
+            // is joined on it -> startup deadlock. asyncExecutor is still used for runtime txns.
     }
 
     @Override
@@ -96,7 +104,7 @@ public class DatabaseBankStorage implements BankStorage {
             if (sessions != null) {
                 sessions.shutdown();
             }
-        }, asyncExecutor);
+        }, asyncExecutor).whenComplete((v, ex) -> dbPool.shutdown());
     }
 
     @Override

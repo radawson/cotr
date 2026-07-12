@@ -150,10 +150,17 @@ public class CoinOfTheRealmPlugin extends JavaPlugin {
         databaseBankStorage = new DatabaseBankStorage(this);
         bankStorage = databaseBankStorage; // Also store as interface
         
-        // Initialize storage synchronously (wait for it to complete)
+        // Wait for storage init, but with a hard timeout so a stalled DB/migration degrades
+        // (banking disabled this run) instead of bricking server startup — see the incident where
+        // a no-timeout join() on a scheduler-deadlocked init froze the whole server.
         try {
-            databaseBankStorage.initialize().join();
+            databaseBankStorage.initialize().get(30, java.util.concurrent.TimeUnit.SECONDS);
             debug("CoinOfTheRealmPlugin.initializeBankStorage() - Storage initialized");
+        } catch (java.util.concurrent.TimeoutException e) {
+            getLogger().log(java.util.logging.Level.SEVERE,
+                "Bank storage init timed out after 30s — banking disabled this run (server still starts)", e);
+            databaseBankStorage = null;
+            bankStorage = null;
         } catch (Exception e) {
             getLogger().log(java.util.logging.Level.SEVERE, "Failed to initialize bank storage", e);
             databaseBankStorage = null;

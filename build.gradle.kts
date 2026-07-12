@@ -46,6 +46,12 @@ tasks {
         archiveBaseName.set("CoinOfTheRealm")
         archiveVersion.set(project.version.toString())
 
+        // Flyway/Hibernate discover plugins via META-INF/services ServiceLoader files. Several jars
+        // (flyway-core + flyway-mysql, etc.) declare the SAME service path; with the default EXCLUDE
+        // strategy those duplicates are dropped BEFORE mergeServiceFiles() can combine them, leaving
+        // Flyway's PluginRegister empty -> NPE in DriverDataSource. INCLUDE lets the merge see them all.
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+
         manifest {
             attributes["paperweight-mappings-namespace"] = "mojang"
         }
