@@ -16,9 +16,25 @@ repositories {
 dependencies {
     paperweight.paperDevBundle("26.1.2.build.74-stable")
 
-    // Shared Clockworx data layer (Hibernate + Flyway + HikariCP + JDBC drivers)
-    // Provided via composite build from ../clockworx-data (see settings.gradle.kts)
-    implementation("org.clockworx:clockworx-data:0.1.0-SNAPSHOT")
+    // Shared Clockworx data layer. Its own classes are bundled; its heavy Maven deps
+    // (Hibernate/Flyway/HikariCP/JDBC) are NOT shaded (isTransitive=false) -- they are loaded
+    // at runtime by Paper's library-loader (see CotrLoader). Removes the per-plugin relocation
+    // + service-file merge and shrinks the jar from ~35 MB to a few hundred KB.
+    implementation("org.clockworx:clockworx-data:0.1.0-SNAPSHOT") { isTransitive = false }
+
+    // DB stack -- compile-only: compiled against, but provided at runtime by the library-loader,
+    // not bundled. Keep in sync with clockworx-data's api() deps and CotrLoader.LIBRARIES.
+    compileOnly("org.hibernate:hibernate-core:6.6.40.Final")
+    compileOnly("org.hibernate:hibernate-community-dialects:6.6.40.Final")
+    compileOnly("org.hibernate.orm:hibernate-hikaricp:6.6.40.Final")
+    compileOnly("jakarta.persistence:jakarta.persistence-api:3.1.0")
+    compileOnly("org.flywaydb:flyway-core:12.10.0")
+    compileOnly("org.flywaydb:flyway-mysql:12.10.0")
+    compileOnly("com.zaxxer:HikariCP:7.1.0")
+    compileOnly("org.jboss.logging:jboss-logging:3.6.1.Final")
+    compileOnly("org.xerial:sqlite-jdbc:3.53.2.0")
+    compileOnly("com.mysql:mysql-connector-j:9.1.0")
+    compileOnly("org.postgresql:postgresql:42.7.11")
 
     // ServiceIO is optional - only needed at compile time for API reference
     compileOnly("net.thenextlvl.services:service-io:2.3.1")
@@ -56,17 +72,8 @@ tasks {
             attributes["paperweight-mappings-namespace"] = "mojang"
         }
 
-        relocate("com.zaxxer.hikari", "org.clockworx.cotr.lib.hikari")
-        relocate("org.hibernate", "org.clockworx.cotr.lib.hibernate")
-        relocate("org.jboss.logging", "org.clockworx.cotr.lib.jboss.logging")
-        relocate("jakarta.persistence", "org.clockworx.cotr.lib.jakarta.persistence")
-        relocate("org.flywaydb", "org.clockworx.cotr.lib.flywaydb")
-        relocate("org.xerial.sqlite", "org.clockworx.cotr.lib.xerial.sqlite")
-        relocate("com.mysql.cj", "org.clockworx.cotr.lib.mysql")
-
-        // IMPORTANT: Specifically exclude the core SQLite package from relocation
-        // to prevent breaking native library loading (JNI).
-        exclude("org/sqlite/**")
+        // The DB stack (Hibernate/Flyway/HikariCP/JDBC) is loaded at runtime via the
+        // library-loader (CotrLoader), so it is neither bundled nor relocated here.
 
         mergeServiceFiles()
     }
